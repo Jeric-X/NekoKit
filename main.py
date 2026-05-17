@@ -5,8 +5,8 @@ from astrbot.core.agent.tool import FunctionTool, ToolExecResult
 from astrbot.core.agent.run_context import ContextWrapper
 from astrbot.core.astr_agent_context import AstrAgentContext
 
-from .tools import KVStoreTool
-from .core import ToolResult
+from tools import KVStoreTool
+from core import ToolResult
 
 
 class KVStoreFunctionTool(FunctionTool[AstrAgentContext]):

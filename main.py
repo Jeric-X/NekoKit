@@ -1,6 +1,7 @@
 from astrbot.api import logger
 from astrbot.api import star
 from astrbot.api.star import StarTools
+from astrbot.api import AstrBotConfig
 from astrbot.core.agent.tool import FunctionTool, ToolExecResult
 from astrbot.core.agent.run_context import ContextWrapper
 from astrbot.core.astr_agent_context import AstrAgentContext
@@ -39,7 +40,7 @@ class KVGetTool(FunctionTool[AstrAgentContext]):
     ) -> ToolExecResult:
         if not self._kv_tool:
             return ToolExecResult(error="KVStoreTool 未初始化")
-        
+
         self._kv_tool.set_context(context)
         try:
             result: ToolResult = await self._kv_tool.execute(action="get", **kwargs)
@@ -85,7 +86,7 @@ class KVSetTool(FunctionTool[AstrAgentContext]):
     ) -> ToolExecResult:
         if not self._kv_tool:
             return ToolExecResult(error="KVStoreTool 未初始化")
-        
+
         self._kv_tool.set_context(context)
         try:
             result: ToolResult = await self._kv_tool.execute(action="set", **kwargs)
@@ -127,7 +128,7 @@ class KVDeleteTool(FunctionTool[AstrAgentContext]):
     ) -> ToolExecResult:
         if not self._kv_tool:
             return ToolExecResult(error="KVStoreTool 未初始化")
-        
+
         self._kv_tool.set_context(context)
         try:
             result: ToolResult = await self._kv_tool.execute(action="delete", **kwargs)
@@ -163,7 +164,7 @@ class KVListTool(FunctionTool[AstrAgentContext]):
     ) -> ToolExecResult:
         if not self._kv_tool:
             return ToolExecResult(error="KVStoreTool 未初始化")
-        
+
         self._kv_tool.set_context(context)
         try:
             result: ToolResult = await self._kv_tool.execute(action="list", **kwargs)
@@ -179,7 +180,7 @@ class KVListTool(FunctionTool[AstrAgentContext]):
 class Main(star.Star):
     """NekoKit 插件主类"""
 
-    def __init__(self, context: star.Context) -> None:
+    def __init__(self, context: star.Context, config: AstrBotConfig = None) -> None:
         super().__init__(context)
         self.context = context
 
@@ -188,20 +189,18 @@ class Main(star.Star):
         self._kv_tool = KVStoreTool()
         self._kv_tool.initialize(self.data_dir)
 
-        self._load_config()
+        if config:
+            kvstore_config = {}
+            if config.get("ai_isolation") is not None:
+                kvstore_config["ai_isolation"] = config.get("ai_isolation")
+            if config.get("session_scope") is not None:
+                kvstore_config["session_scope"] = config.get("session_scope")
+            self._kv_tool.set_config(kvstore_config)
+            logger.info(f"[NekoKit] 已加载配置: {kvstore_config}")
 
         self._register_tools()
 
         logger.info("[NekoKit] 插件已加载，已注册 KV 存储工具")
-
-    def _load_config(self):
-        """加载配置"""
-        try:
-            config = self.context.get_config()
-            kvstore_config = config.get("kvstore", {})
-            self._kv_tool.set_config(kvstore_config)
-        except Exception as e:
-            logger.warning(f"[NekoKit] 加载配置失败，使用默认配置: {e}")
 
     def _register_tools(self):
         """注册工具"""

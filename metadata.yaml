@@ -6,3 +6,4 @@ short_desc: AstrBot 工具仓库，为 AI 提供 KV 存储等实用工具
 display_name: NekoKit 🐱
 astrbot_version: ">=4.16,<5"
 repository: "https://github.com/Inaiinaiba/NekoKit.git"
+repo: "https://github.com/Inaiinaiba/NekoKit.git"

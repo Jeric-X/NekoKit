@@ -16,6 +16,7 @@ from .tools.image_analyzer import (
     VisionTool,
     PreprocessTool,
     CacheTool,
+    ScenePresetTool,
     ImageCache,
 )
 from .core import ToolResult
@@ -450,6 +451,68 @@ class CateyeCacheTool(FunctionTool[AstrAgentContext]):
             return f"Cache 执行失败: {str(e)}"
 
 
+@dataclass
+class CateyeSceneTool(FunctionTool[AstrAgentContext]):
+    """场景预设"""
+
+    name: str = "cateye_scene"
+    description: str = (
+        "场景预设工具。根据场景编码返回工具组合策略，"
+        "指导按步骤调用 cateye 工具集。"
+        "支持查看预设列表、获取具体方案、自定义修改方案。"
+    )
+    parameters: dict = field(
+        default_factory=lambda: {
+            "type": "object",
+            "properties": {
+                "action": {
+                    "type": "string",
+                    "description": (
+                        "操作类型：list（列出所有预设）、"
+                        "get（获取指定预设的方案）、"
+                        "update（更新预设方案，需提供 scene_code 和 preset_json）"
+                    ),
+                    "enum": ["list", "get", "update"],
+                },
+                "scene_code": {
+                    "type": "string",
+                    "description": "场景编码，如 extract_text、identify_character、find_anime_source 等",
+                },
+                "preset_json": {
+                    "type": "string",
+                    "description": (
+                        "预设方案的 JSON 字符串（update 操作时必填）。"
+                        '格式: {"name": "场景名", "description": "描述", '
+                        '"steps": [{"tool": "工具名", "params": {参数}}]}'
+                    ),
+                },
+            },
+            "required": ["action"],
+        }
+    )
+
+    _scene_tool: ScenePresetTool = None
+
+    @classmethod
+    def create_with_tool(cls, scene_tool: ScenePresetTool) -> "CateyeSceneTool":
+        tool = cls()
+        tool._scene_tool = scene_tool
+        return tool
+
+    async def call(self, context: ContextWrapper[AstrAgentContext], **kwargs) -> str:
+        if not self._scene_tool:
+            return "ScenePresetTool 未初始化"
+        try:
+            result: ToolResult = await self._scene_tool.execute(**kwargs)
+            if result.success:
+                return json.dumps(result.to_dict(), ensure_ascii=False)
+            else:
+                return result.message
+        except Exception as e:
+            logger.error(f"[nekokit.cateye] Scene 执行失败: {e}")
+            return f"Scene 执行失败: {str(e)}"
+
+
 class Main(star.Star):
     """NekoKit 插件主类"""
 
@@ -485,20 +548,15 @@ class Main(star.Star):
         self._cateye_cache.set_ttl(ttl)
 
         self._ocr_tool = OCRTool()
-        self._ocr_tool.initialize(
-            self.data_dir, cateye_config, cache=self._cateye_cache
-        )
+        self._ocr_tool.initialize(self.data_dir, cateye_config)
 
         self._search_tool = ImageSearchTool()
-        self._search_tool.initialize(
-            self.data_dir, cateye_config, cache=self._cateye_cache
-        )
+        self._search_tool.initialize(self.data_dir, cateye_config)
 
         self._vision_tool = VisionTool()
         self._vision_tool.initialize(
             self.data_dir,
             cateye_config,
-            cache=self._cateye_cache,
             star_context=self.context,
         )
 
@@ -509,6 +567,9 @@ class Main(star.Star):
         self._cache_tool.initialize(
             self.data_dir, cateye_config, cache=self._cateye_cache
         )
+
+        self._scene_tool = ScenePresetTool()
+        self._scene_tool.initialize(self.data_dir, cateye_config)
 
     def _build_cateye_config(self, config: AstrBotConfig = None) -> dict:
         cateye_config = {}
@@ -566,6 +627,7 @@ class Main(star.Star):
             CateyeVisionTool.create_with_tool(self._vision_tool),
             CateyePreprocessTool.create_with_tool(self._preprocess_tool),
             CateyeCacheTool.create_with_tool(self._cache_tool),
+            CateyeSceneTool.create_with_tool(self._scene_tool),
         ]
         self.context.add_llm_tools(*tools)
 

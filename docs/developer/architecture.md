@@ -8,8 +8,7 @@
 nekokit/
 ├── _conf_schema.json            # 插件配置 Schema，用于 WebUI 可视化配置
 ├── CHANGELOG.md                 # 版本更新日志
-├── README.md                    # 用户使用文档
-├── ARCHITECTURE.md              # 架构概览（面向普通用户）
+├── README.md                    # 架构概览（面向普通用户）
 ├── metadata.yaml                # 插件元数据（名称、版本、仓库等）
 ├── main.py                      # AstrBot 插件入口 + FunctionTool 注册
 ├── core.py                      # 核心抽象层
@@ -34,11 +33,12 @@ nekokit/
     └── image_analyzer/          # Cateye 图片识别子包
         ├── __init__.py          # 子包导出
         ├── _internal.py         # 内部共享工具（缓存、下载、预处理、哈希）
-        ├── ocr_tool.py          # OCR 工具
+        ├── ocr_tool.py          # OCR 工具（RapidOCR）
         ├── image_search_tool.py # 以图搜图工具
         ├── vision_tool.py       # 视觉理解工具
         ├── preprocess_tool.py   # 预处理工具
-        └── cache_tool.py        # 缓存工具
+        ├── cache_tool.py        # 缓存工具
+        └── scene_preset_tool.py # 场景预设工具
 ```
 
 ## 分层架构
@@ -48,16 +48,16 @@ nekokit/
 │                         FunctionTool 层                              │  main.py
 │  get_kv | set_kv | delete_kv | list_kv                              │
 │  cateye_ocr | cateye_search | cateye_vision | cateye_preprocess     │
-│  | cateye_cache                                                     │
+│  cateye_cache | cateye_scene                                        │
 ├──────────────────────────────┬───────────────────────────────────────┤
 │     KVStoreTool (BaseTool)   │     Cateye 工具集 (BaseTool)          │
 │  业务逻辑、命名空间策略、     │  OCRTool | ImageSearchTool            │
 │  配置管理                    │  VisionTool | PreprocessTool          │
-│                              │  CacheTool                            │
+│                              │  CacheTool | ScenePresetTool          │
 │                              │  共享 ImageCache + _internal          │
 ├──────────────────────────────┼───────────────────────────────────────┤
 │      StorageBackend          │           外部服务                     │
-│     SQLite 存储引擎          │  EasyOCR | trace.moe | SauceNAO       │
+│     SQLite 存储引擎          │  RapidOCR | trace.moe | SauceNAO      │
 │                              │  华为云 | AstrBot LLM                 │
 └──────────────────────────────┴───────────────────────────────────────┘
 ```
@@ -66,13 +66,14 @@ nekokit/
 
 | 层次 | 文件 | 职责 |
 |------|------|------|
-| **FunctionTool** | `main.py` | 定义 9 个独立的 AstrBot FunctionTool，每个工具负责：参数校验、调用 BaseTool、结果转换 |
+| **FunctionTool** | `main.py` | 定义 10 个独立的 AstrBot FunctionTool，每个工具负责：参数校验、调用 BaseTool、结果转换 |
 | **BaseTool - KV** | `tools/kv_store/kv_store_tool.py` | 实现 `KVStoreTool(BaseTool)`，包含核心业务逻辑：action 分发、命名空间构建、配置读取 |
-| **BaseTool - OCR** | `tools/image_analyzer/ocr_tool.py` | 实现 `OCRTool(BaseTool)`，EasyOCR 文字识别 + 线程池异步 + 缓存 |
+| **BaseTool - OCR** | `tools/image_analyzer/ocr_tool.py` | 实现 `OCRTool(BaseTool)`，RapidOCR 文字识别 + 线程池异步 |
 | **BaseTool - 搜图** | `tools/image_analyzer/image_search_tool.py` | 实现 `ImageSearchTool(BaseTool)`，多供应商搜图 + 场景自动选择 |
 | **BaseTool - 视觉** | `tools/image_analyzer/vision_tool.py` | 实现 `VisionTool(BaseTool)`，双模式大模型视觉理解 |
 | **BaseTool - 预处理** | `tools/image_analyzer/preprocess_tool.py` | 实现 `PreprocessTool(BaseTool)`，按任务类型预设参数表优化图片 |
 | **BaseTool - 缓存** | `tools/image_analyzer/cache_tool.py` | 实现 `CacheTool(BaseTool)`，缓存查询与存储 |
+| **BaseTool - 场景** | `tools/image_analyzer/scene_preset_tool.py` | 实现 `ScenePresetTool(BaseTool)`，场景预设管理与工具组合策略 |
 | **StorageBackend** | `tools/kv_store/storage.py` | 实现 `SQLiteStorageBackend`，封装 SQLite 增删改查操作 |
 | **Core 抽象** | `core.py` | 定义 `StorageBackend`、`NamespaceStrategy`、`BaseTool`、`ToolResult` 等抽象基类 |
 | **Context** | `tools/kv_store/context.py` | 从 AstrBot 运行时上下文提取 AI ID 和会话 ID |
@@ -87,11 +88,12 @@ StorageBackend (ABC)        NamespaceStrategy (ABC)        BaseTool (ABC)
                                                                ├── ImageSearchTool
                                                                ├── VisionTool
                                                                ├── PreprocessTool
-                                                               └── CacheTool
+                                                               ├── CacheTool
+                                                               └── ScenePresetTool
 
 ImageCache                                                    ToolResult
   ├── MD5 精确匹配                                             ├── success
-  ├── dHash 相似图检测                                          ├── message
+  ├── dHash 相似图检测（比特级汉明距离）                         ├── message
   ├── TTL 过期机制                                              └── data
   └── 汉明距离阈值
 
@@ -104,7 +106,8 @@ FunctionTool (AstrBot)
     ├── CateyeSearchTool   ──→  ImageSearchTool.execute()
     ├── CateyeVisionTool   ──→  VisionTool.execute()
     ├── CateyePreprocessTool ──→  PreprocessTool.execute()
-    └── CateyeCacheTool    ──→  CacheTool.execute()
+    ├── CateyeCacheTool    ──→  CacheTool.execute()
+    └── CateyeSceneTool   ──→  ScenePresetTool.execute()
 ```
 
 ## 双层抽象设计
@@ -141,34 +144,42 @@ KVStoreTool.execute(action=..., **kwargs)
 
 ### Cateye 图片识别数据流
 
+核心工具与辅助工具解耦后，数据流由场景预设方案编排：
+
 ```
-AI 调用 (cateye_ocr/cateye_search/cateye_vision)
+AI 调用 cateye_scene(action="get", scene_code="extract_text")
         │
         ▼
-FunctionTool.call(context, **kwargs)
+获取步骤方案 → 按步骤依次调用工具
         │
         ▼
+Step 1: cateye_cache(action="check")  ──→  命中缓存则直接返回
+Step 2: cateye_preprocess(task_type)   ──→  优化图片
+Step 3: cateye_ocr()                   ──→  执行识别
+Step 4: cateye_cache(action="store")   ──→  存储结果
+```
+
+核心工具的内部流程：
+
+```
 BaseTool.execute(**kwargs)
         │
         ├── 1. 下载图片（URL/本地路径/Base64）
-        ├── 2. 计算图片哈希（MD5 + dHash）
-        ├── 3. 查询缓存（命中则直接返回）
-        ├── 4. 预处理图片（按任务类型优化）
-        ├── 5. 执行核心逻辑（OCR/搜图/视觉理解）
-        └── 6. 存储缓存结果
+        └── 2. 执行核心逻辑（OCR/搜图/视觉理解）
                 │
                 ▼
-        外部服务（EasyOCR / trace.moe / SauceNAO / 华为云 / AstrBot LLM）
+        外部服务（RapidOCR / trace.moe / SauceNAO / 华为云 / AstrBot LLM）
 ```
 
-### 辅助工具与核心工具的组合关系
+### 核心与辅助的解耦关系
 
-核心工具内部自动调用辅助逻辑（缓存检查 + 预处理），AI 无需手动组合。辅助工具独立暴露，用于以下场景：
+核心工具不内置缓存和预处理，由智能体根据场景预设方案手动编排：
 
-- **cateye_preprocess**：配置中关闭了自动预处理时手动触发，或 AI 想先了解预处理后的图片信息
-- **cateye_cache**：AI 在调用昂贵 API 前主动探查缓存，或跨任务类型复用缓存
+- **cateye_preprocess**：在核心工具调用前预处理图片，优化识别效果
+- **cateye_cache**：在核心工具调用前检查缓存，调用后存储结果
+- **cateye_scene**：提供预设方案，指导智能体按正确顺序组合工具
 
-所有 Cateye 工具共享同一个 `ImageCache` 实例（通过 `initialize(cache=...)` 注入），确保缓存一致性。
+`CacheTool` 和 `PreprocessTool` 共享同一个 `ImageCache` 实例（通过 `initialize(cache=...)` 注入），确保缓存一致性。
 
 ## 配置加载流程
 
@@ -183,12 +194,13 @@ AstrBot 启动
     │       │
     │       ├── 构建 cateye_config（合并通用/OCR/搜图/大模型/缓存配置）
     │       ├── 初始化 ImageCache（设置 TTL）
-    │       ├── 初始化 OCRTool（传入 config + cache）
-    │       ├── 初始化 ImageSearchTool（传入 config + cache）
-    │       ├── 初始化 VisionTool（传入 config + cache + star_context）
+    │       ├── 初始化 OCRTool（传入 config）
+    │       ├── 初始化 ImageSearchTool（传入 config）
+    │       ├── 初始化 VisionTool（传入 config + star_context）
     │       ├── 初始化 PreprocessTool（传入 config）
-    │       └── 初始化 CacheTool（传入 config + cache）
-    └── 注册 9 个工具至 AstrBot
+    │       ├── 初始化 CacheTool（传入 config + cache）
+    │       └── 初始化 ScenePresetTool（传入 config）
+    └── 注册 10 个工具至 AstrBot
 ```
 
 ## 扩展指南

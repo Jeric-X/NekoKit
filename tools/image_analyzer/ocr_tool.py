@@ -5,35 +5,24 @@ from typing import Any, Dict
 from astrbot.api import logger
 
 from ...core import BaseTool, ToolResult
-from ._internal import (
-    ImageCache,
-    compute_image_hashes,
-    download_image,
-    preprocess_image,
-)
+from ._internal import download_image
 
 
 class OCRTool(BaseTool):
     def __init__(self):
         self._data_dir: str = ""
         self._config: Dict[str, Any] = {}
-        self._cache: ImageCache = ImageCache()
         self._engine = None
 
     def initialize(
         self,
         data_dir: str,
         config: Dict[str, Any] = None,
-        cache: ImageCache = None,
         **kwargs,
     ) -> None:
         self._data_dir = data_dir
         if config:
             self._config = config
-        if cache:
-            self._cache = cache
-        ttl = self._config.get("cache_ttl_hours", 1.0)
-        self._cache.set_ttl(ttl)
 
     def _get_engine(self):
         if self._engine is None:
@@ -77,23 +66,6 @@ class OCRTool(BaseTool):
             img_dir = os.path.join(self._data_dir, "cateye", "images")
             image_path = await download_image(image_url, img_dir)
 
-            md5, dhash_val = compute_image_hashes(image_path)
-
-            cache_key = self._cache.find_similar(md5, dhash_val)
-            if cache_key:
-                cached = self._cache.get(cache_key, "ocr")
-                if cached is not None:
-                    logger.info("[nekokit.cateye] OCR 缓存命中")
-                    return ToolResult(
-                        success=True,
-                        message="OCR 结果（缓存）",
-                        data={"text": cached, "cached": True},
-                    )
-
-            if self._config.get("preprocess_enabled", True):
-                output_dir = os.path.join(self._data_dir, "cateye", "preprocessed")
-                image_path = preprocess_image(image_path, "ocr", output_dir)
-
             engine = self._get_engine()
             loop = asyncio.get_event_loop()
             result, elapse = await loop.run_in_executor(None, engine, image_path)
@@ -104,8 +76,6 @@ class OCRTool(BaseTool):
             else:
                 text_parts = [item[1] for item in result]
                 full_text = "\n".join(text_parts)
-
-            self._cache.store(md5, dhash_val, "ocr", full_text)
 
             logger.info(f"[nekokit.cateye] OCR 完成，提取了 {len(text_parts)} 个文本块")
             return ToolResult(

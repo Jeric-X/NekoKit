@@ -4,39 +4,27 @@ from typing import Any, Dict, Optional
 from astrbot.api import logger
 
 from ...core import BaseTool, ToolResult
-from ._internal import (
-    ImageCache,
-    compute_image_hashes,
-    download_image,
-    image_to_base64_url,
-    preprocess_image,
-)
+from ._internal import download_image, image_to_base64_url
 
 
 class VisionTool(BaseTool):
     def __init__(self):
         self._data_dir: str = ""
         self._config: Dict[str, Any] = {}
-        self._cache: ImageCache = ImageCache()
         self._star_context = None
 
     def initialize(
         self,
         data_dir: str,
         config: Dict[str, Any] = None,
-        cache: ImageCache = None,
         star_context=None,
         **kwargs,
     ) -> None:
         self._data_dir = data_dir
         if config:
             self._config = config
-        if cache:
-            self._cache = cache
         if star_context:
             self._star_context = star_context
-        ttl = self._config.get("cache_ttl_hours", 1.0)
-        self._cache.set_ttl(ttl)
 
     def get_name(self) -> str:
         return "cateye_vision"
@@ -88,23 +76,6 @@ class VisionTool(BaseTool):
             img_dir = os.path.join(self._data_dir, "cateye", "images")
             image_path = await download_image(image_url, img_dir)
 
-            md5, dhash_val = compute_image_hashes(image_path)
-
-            cache_key = self._cache.find_similar(md5, dhash_val)
-            if cache_key:
-                cached = self._cache.get(cache_key, "vision")
-                if cached is not None:
-                    logger.info("[nekokit.cateye] 视觉缓存命中")
-                    return ToolResult(
-                        success=True,
-                        message="视觉理解结果（缓存）",
-                        data={"analysis": cached, "cached": True},
-                    )
-
-            if self._config.get("preprocess_enabled", True):
-                output_dir = os.path.join(self._data_dir, "cateye", "preprocessed")
-                image_path = preprocess_image(image_path, "vision", output_dir)
-
             provider_id = self._resolve_provider(mode)
             if not provider_id:
                 return ToolResult(
@@ -123,8 +94,6 @@ class VisionTool(BaseTool):
             )
 
             analysis = llm_resp.completion_text if llm_resp else ""
-
-            self._cache.store(md5, dhash_val, "vision", analysis)
 
             logger.info(f"[nekokit.cateye] 视觉分析完成（{mode} 模式）")
             return ToolResult(

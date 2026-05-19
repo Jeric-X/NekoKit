@@ -6,12 +6,7 @@ import aiohttp
 from astrbot.api import logger
 
 from ...core import BaseTool, ToolResult
-from ._internal import (
-    ImageCache,
-    compute_image_hashes,
-    download_image,
-    preprocess_image,
-)
+from ._internal import download_image
 
 PROVIDERS = {
     "huawei": {
@@ -43,22 +38,16 @@ class ImageSearchTool(BaseTool):
     def __init__(self):
         self._data_dir: str = ""
         self._config: Dict[str, Any] = {}
-        self._cache: ImageCache = ImageCache()
 
     def initialize(
         self,
         data_dir: str,
         config: Dict[str, Any] = None,
-        cache: ImageCache = None,
         **kwargs,
     ) -> None:
         self._data_dir = data_dir
         if config:
             self._config = config
-        if cache:
-            self._cache = cache
-        ttl = self._config.get("cache_ttl_hours", 1.0)
-        self._cache.set_ttl(ttl)
 
     def get_name(self) -> str:
         return "cateye_search"
@@ -106,23 +95,6 @@ class ImageSearchTool(BaseTool):
             img_dir = os.path.join(self._data_dir, "cateye", "images")
             image_path = await download_image(image_url, img_dir)
 
-            md5, dhash_val = compute_image_hashes(image_path)
-
-            cache_key = self._cache.find_similar(md5, dhash_val)
-            if cache_key:
-                cached = self._cache.get(cache_key, "search")
-                if cached is not None:
-                    logger.info("[nekokit.cateye] 搜图缓存命中")
-                    return ToolResult(
-                        success=True,
-                        message="搜图结果（缓存）",
-                        data={"results": cached, "cached": True},
-                    )
-
-            if self._config.get("preprocess_enabled", True):
-                output_dir = os.path.join(self._data_dir, "cateye", "preprocessed")
-                image_path = preprocess_image(image_path, "search", output_dir)
-
             providers_to_try = self._resolve_providers(scene, provider)
 
             all_results = []
@@ -143,8 +115,6 @@ class ImageSearchTool(BaseTool):
                     message="所有供应商均未找到结果",
                     data={"results": [], "providers_tried": providers_to_try},
                 )
-
-            self._cache.store(md5, dhash_val, "search", all_results)
 
             logger.info(f"[nekokit.cateye] 搜图完成，找到 {len(all_results)} 条结果")
             return ToolResult(

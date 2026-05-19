@@ -1,6 +1,6 @@
 # Cateye 图片识别工具 - 智能体使用指南
 
-NekoKit 提供了 5 个图片识别工具，统称为 **cateye** 工具集。本指南帮助你选择和组合这些工具。
+NekoKit 提供了 6 个图片识别工具，统称为 **cateye** 工具集。本指南帮助你选择和组合这些工具。
 
 ---
 
@@ -13,6 +13,36 @@ NekoKit 提供了 5 个图片识别工具，统称为 **cateye** 工具集。本
 | 视觉理解 | `cateye_vision` | 核心 | 多模态大模型图片理解 |
 | 预处理 | `cateye_preprocess` | 辅助 | 按任务类型优化图片尺寸和格式 |
 | 缓存 | `cateye_cache` | 辅助 | 检查/存储缓存结果，避免重复 API 调用 |
+| 场景预设 | `cateye_scene` | 编排 | 返回工具组合策略，指导按步骤调用工具 |
+
+---
+
+## 快速开始：场景预设
+
+**推荐使用 `cateye_scene` 获取工具组合方案**，而非手动编排工具调用。
+
+```json
+{ "action": "list" }
+```
+
+返回所有可用场景预设。然后用 `get` 获取具体方案：
+
+```json
+{ "action": "get", "scene_code": "extract_text" }
+```
+
+方案会返回一个 `steps` 列表，按顺序调用即可。你也可以用 `update` 操作修改预设方案，实现任务自适应。
+
+### 内置场景预设
+
+| 编码 | 名称 | 工具组合 |
+|------|------|---------|
+| `extract_text` | 文字提取 | cache→preprocess→ocr→cache |
+| `identify_character` | 角色识别 | cache→preprocess→search→preprocess→vision→cache |
+| `find_anime_source` | 番剧溯源 | cache→preprocess→search→cache |
+| `understand_meme` | 表情包理解 | cache→preprocess→vision→cache |
+| `analyze_chart` | 图表分析 | cache→preprocess→vision(professional)→cache |
+| `full_analysis` | 全面分析 | 全工具组合 |
 
 ---
 
@@ -20,7 +50,7 @@ NekoKit 提供了 5 个图片识别工具，统称为 **cateye** 工具集。本
 
 ### cateye_ocr
 
-使用 EasyOCR 从图片中提取文字。
+使用 RapidOCR 从图片中提取文字，默认支持中文和英文。
 
 ```json
 {
@@ -28,8 +58,7 @@ NekoKit 提供了 5 个图片识别工具，统称为 **cateye** 工具集。本
   "parameters": {
     "type": "object",
     "properties": {
-      "image_url": { "type": "string", "description": "图片 URL 或本地文件路径" },
-      "languages": { "type": "array", "items": { "type": "string" }, "description": "OCR 识别语言，如 ['ch_sim','en']。默认：简体中文 + 英文" }
+      "image_url": { "type": "string", "description": "图片 URL 或本地文件路径" }
     },
     "required": ["image_url"]
   }
@@ -141,71 +170,46 @@ NekoKit 提供了 5 个图片识别工具，统称为 **cateye** 工具集。本
 }
 ```
 
+### cateye_scene
+
+场景预设工具，返回工具组合策略。
+
+```json
+{
+  "name": "cateye_scene",
+  "parameters": {
+    "type": "object",
+    "properties": {
+      "action": { "type": "string", "enum": ["list", "get", "update"], "description": "操作类型" },
+      "scene_code": { "type": "string", "description": "场景编码" },
+      "preset_json": { "type": "string", "description": "预设方案 JSON（update 时必填）" }
+    },
+    "required": ["action"]
+  }
+}
+```
+
+**调用示例：**
+```json
+{ "action": "list" }
+{ "action": "get", "scene_code": "extract_text" }
+{ "action": "update", "scene_code": "my_scene", "preset_json": "{\"name\":\"自定义\",\"steps\":[{\"tool\":\"cateye_ocr\",\"params\":{}}]}" }
+```
+
 ---
 
-## 最佳实践场景
+## 工具组合方式
 
-### 场景一：提取图片中的文字
+核心工具（OCR / 搜图 / 视觉理解）专注于识别逻辑，**不内置缓存和预处理**。智能体需要按场景预设方案手动编排辅助工具的调用顺序。
 
-**用户说：** "帮我把这张图里的文字提取出来"
+典型流程：
 
-直接使用 `cateye_ocr`，无需其他工具。
+1. `cateye_cache(action="check")` — 检查缓存
+2. `cateye_preprocess()` — 预处理图片
+3. 核心工具 — 执行识别
+4. `cateye_cache(action="store")` — 存储结果
 
-```
-cateye_ocr(image_url="...")
-```
-
-### 场景二：识别角色或人物
-
-**用户说：** "这是谁？" / "这个角色是谁？"
-
-组合使用 `cateye_search` + `cateye_vision`：
-
-1. `cateye_search(image_url="...", scene="auto")` — 查找匹配来源
-2. `cateye_vision(image_url="...", prompt="详细描述这个角色的外观", mode="daily")` — 获取视觉描述
-3. 综合两个结果给出完整回答
-
-### 场景三：查找番剧截图出处
-
-**用户说：** "这是哪部番的？"
-
-使用 `cateye_search` 的 anime 场景：
-
-```
-cateye_search(image_url="...", scene="anime")
-```
-
-### 场景四：理解表情包或颜文字
-
-**用户说：** "这个表情包什么意思？"
-
-使用 `cateye_vision` 的 daily 模式：
-
-```
-cateye_vision(image_url="...", prompt="解释这个表情包/颜文字的含义", mode="daily")
-```
-
-### 场景五：分析复杂图表或解题
-
-**用户说：** "帮我分析这个图表" / "这道题怎么做？"
-
-使用 `cateye_vision` 的 professional 模式：
-
-```
-cateye_vision(image_url="...", prompt="详细分析这个图表", mode="professional")
-```
-
-**注意：** 专业模式消耗更多 token，仅在真正复杂的任务时使用。
-
-### 场景六：没有明确指令，通用图片
-
-**用户说：** "看看这张图" / "这是什么？"
-
-组合所有核心工具进行全面分析：
-
-1. `cateye_ocr(image_url="...")` — 检查是否有文字
-2. `cateye_search(image_url="...", scene="auto")` — 查找相似图片
-3. `cateye_vision(image_url="...", prompt="全面描述这张图片", mode="daily")` — 获取 AI 理解
+**推荐使用 `cateye_scene` 获取完整的步骤方案**，避免遗漏辅助步骤。
 
 ---
 
@@ -215,17 +219,11 @@ cateye_vision(image_url="...", prompt="详细分析这个图表", mode="professi
 
 当用户对之前分享的图片提出后续问题时，你**不需要**重新运行所有工具。利用对话历史回忆之前的分析结果。
 
-**示例流程：**
-1. 用户发送图片 → 你运行 `cateye_vision` → 描述图片
-2. 用户问"里面有什么文字？" → 你运行 `cateye_ocr` 处理同一张图
-3. 用户问"能找到出处吗？" → 你运行 `cateye_search` 处理同一张图
-
 ### 多图片关联
 
 当用户发送多张图片进行比较或关联时：
 - 对每张图片独立运行工具
 - 在回复中综合分析结果
-- 如需比较，可使用 `cateye_vision` 并在 prompt 中引用两张图片
 
 ### 专业模式使用注意
 
@@ -242,7 +240,7 @@ cateye_vision(image_url="...", prompt="详细分析这个图表", mode="professi
 
 | 错误 | 原因 | 建议操作 |
 |------|------|----------|
-| "easyocr is not installed" | 缺少依赖 | 提示用户安装 easyocr |
+| "rapidocr-onnxruntime 未安装" | 缺少依赖 | 提示用户安装 rapidocr-onnxruntime |
 | "No daily_model configured" | 未配置视觉模型 | 提示用户在插件设置中配置模型 |
 | "Huawei Cloud API key not configured" | 缺少 API Key | 建议使用其他供应商或配置 Key |
 | "Failed to download image" | 无效 URL 或网络问题 | 请用户提供有效的图片 URL |
@@ -254,21 +252,6 @@ cateye_vision(image_url="...", prompt="详细分析这个图表", mode="professi
 1. 核心工具失败时，尝试替代工具（如 OCR 失败，尝试 vision）
 2. 特定供应商失败时，尝试其他供应商或使用 `scene="auto"`
 3. 所有工具都失败时，告知用户限制并说明可能的原因
-
----
-
-## 工具组合总结
-
-| 用户意图 | 主要工具 | 辅助工具 | 备注 |
-|----------|----------|----------|------|
-| 提取文字 | `cateye_ocr` | — | 直接使用 |
-| 识别角色/人物 | `cateye_search` | `cateye_vision` | 组合使用效果最佳 |
-| 查找番剧出处 | `cateye_search` (anime) | — | trace.moe 最准确 |
-| 查找插画出处 | `cateye_search` (moe) | — | SauceNAO 最适合二次元 |
-| 理解表情包 | `cateye_vision` (daily) | — | 快速高效 |
-| 分析图表/解题 | `cateye_vision` (professional) | — | 谨慎使用 |
-| 通用"这是什么" | `cateye_ocr` + `cateye_search` + `cateye_vision` | — | 全面分析 |
-| 同一图片后续提问 | 使用对话历史 | 仅在需要新工具时调用 | 避免重复调用 |
 
 ---
 

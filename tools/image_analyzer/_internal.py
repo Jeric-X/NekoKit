@@ -39,8 +39,13 @@ class ImageCache:
 
     def hamming_distance(self, hash1: str, hash2: str) -> int:
         if not hash1 or not hash2:
-            return max(len(hash1), len(hash2))
-        return sum(c1 != c2 for c1, c2 in zip(hash1, hash2))
+            return 999999
+        try:
+            val1 = int(hash1, 16)
+            val2 = int(hash2, 16)
+            return bin(val1 ^ val2).count("1")
+        except ValueError:
+            return sum(c1 != c2 for c1, c2 in zip(hash1, hash2))
 
     def find_similar(self, md5: str, dhash_val: str) -> Optional[str]:
         if md5 in self._cache:
@@ -50,13 +55,16 @@ class ImageCache:
             else:
                 del self._cache[md5]
 
+        if not dhash_val:
+            return None
+
         for key, entry in self._cache.items():
             if time.time() - entry["timestamp"] >= self._ttl:
                 continue
-            if (
-                self.hamming_distance(dhash_val, entry.get("dhash", ""))
-                <= self._hamming_threshold
-            ):
+            entry_dhash = entry.get("dhash", "")
+            if not entry_dhash:
+                continue
+            if self.hamming_distance(dhash_val, entry_dhash) <= self._hamming_threshold:
                 return key
 
         return None

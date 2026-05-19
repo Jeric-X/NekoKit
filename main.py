@@ -196,7 +196,9 @@ class CateyeOCRTool(FunctionTool[AstrAgentContext]):
     """OCR 文字识别"""
 
     name: str = "cateye_ocr"
-    description: str = "使用 EasyOCR 引擎提取图片中的文字，返回纯文本。"
+    description: str = (
+        "使用 RapidOCR 引擎提取图片中的文字，返回纯文本。默认支持中文和英文。"
+    )
     parameters: dict = field(
         default_factory=lambda: {
             "type": "object",
@@ -204,13 +206,6 @@ class CateyeOCRTool(FunctionTool[AstrAgentContext]):
                 "image_url": {
                     "type": "string",
                     "description": "图片 URL 或本地文件路径",
-                },
-                "languages": {
-                    "type": "array",
-                    "items": {"type": "string"},
-                    "description": (
-                        "OCR 识别语言，如 ['ch_sim','en']。默认：简体中文+英文"
-                    ),
                 },
             },
             "required": ["image_url"],
@@ -528,7 +523,7 @@ class Main(star.Star):
         cateye_config["custom_prompt"] = image_general.get("custom_prompt", "")
 
         image_ocr = config.get("image_ocr", {})
-        cateye_config["ocr_languages"] = image_ocr.get("languages", ["ch_sim", "en"])
+        cateye_config["ocr_text_score"] = image_ocr.get("text_score", 0.5)
 
         image_search = config.get("image_search", {})
         search_providers = {

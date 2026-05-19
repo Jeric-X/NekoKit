@@ -44,13 +44,13 @@
   "image_ocr": {
     "description": "[图片识别 · OCR] 文字识别引擎设置",
     "type": "object",
-    "hint": "配置 EasyOCR 引擎的识别语言。首次使用时会自动下载语言模型，可能需要等待。",
+    "hint": "RapidOCR 基于 ONNX Runtime，无需 GPU 即可高效运行。默认模型支持中文和英文识别，首次使用时会自动下载模型。",
     "items": {
-      "languages": {
-        "description": "OCR 识别语言列表",
-        "type": "list",
-        "default": ["ch_sim", "en"],
-        "hint": "常用语言代码：ch_sim=简体中文, en=英文, ja=日文, ko=韩文, ch_tra=繁体中文。添加更多语言会增加识别时间。"
+      "text_score": {
+        "description": "文本置信度阈值",
+        "type": "float",
+        "default": 0.5,
+        "hint": "低于此阈值的识别结果将被过滤。降低阈值可识别更多文字但可能增加误识别，提高阈值则更精确但可能遗漏。建议范围 0.3-0.7。"
       }
     }
   },

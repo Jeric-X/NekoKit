@@ -87,36 +87,6 @@ DEFAULT_PRESETS = {
             },
         ],
     },
-    "full_analysis": {
-        "name": "全面分析",
-        "description": "对所有维度进行全面分析，适合不确定图片内容时使用",
-        "steps": [
-            {"tool": "cateye_cache", "params": {"task_type": "ocr", "action": "check"}},
-            {
-                "tool": "cateye_cache",
-                "params": {"task_type": "search", "action": "check"},
-            },
-            {
-                "tool": "cateye_cache",
-                "params": {"task_type": "vision", "action": "check"},
-            },
-            {"tool": "cateye_preprocess", "params": {"task_type": "ocr"}},
-            {"tool": "cateye_ocr", "params": {}},
-            {"tool": "cateye_preprocess", "params": {"task_type": "search"}},
-            {"tool": "cateye_search", "params": {"scene": "auto"}},
-            {"tool": "cateye_preprocess", "params": {"task_type": "vision"}},
-            {"tool": "cateye_vision", "params": {"mode": "daily"}},
-            {"tool": "cateye_cache", "params": {"task_type": "ocr", "action": "store"}},
-            {
-                "tool": "cateye_cache",
-                "params": {"task_type": "search", "action": "store"},
-            },
-            {
-                "tool": "cateye_cache",
-                "params": {"task_type": "vision", "action": "store"},
-            },
-        ],
-    },
 }
 
 

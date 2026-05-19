@@ -42,7 +42,6 @@ NekoKit 提供了 6 个图片识别工具，统称为 **cateye** 工具集。本
 | `find_anime_source` | 番剧溯源 | cache→preprocess→search→cache |
 | `understand_meme` | 表情包理解 | cache→preprocess→vision→cache |
 | `analyze_chart` | 图表分析 | cache→preprocess→vision(professional)→cache |
-| `full_analysis` | 全面分析 | 全工具组合 |
 
 ---
 

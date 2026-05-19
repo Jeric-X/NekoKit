@@ -8,5 +8,116 @@
     "description": "启用后，数据仅在当前会话内可见",
     "type": "bool",
     "default": false
+  },
+  "image_general": {
+    "description": "图片识别 - 通用设置",
+    "type": "object",
+    "items": {
+      "custom_prompt_enabled": {
+        "description": "启用自定义工具使用说明 Prompt（开启后显示可编辑的 Prompt 文本框）",
+        "type": "bool",
+        "default": false
+      },
+      "custom_prompt": {
+        "description": "自定义工具使用说明 Prompt（仅在启用自定义 Prompt 时生效）",
+        "type": "text",
+        "default": "# Cateye Image Analyzer - Agent Guide\n\nNekoKit provides 5 image analysis tools under the cateye toolset.\n\n## Tool Overview\n\n| Tool | Name | Type | Purpose |\n|------|------|------|--------|\n| OCR | cateye_ocr | Core | Extract text from images |\n| Image Search | cateye_search | Core | Reverse image search across multiple providers |\n| Vision | cateye_vision | Core | Multimodal LLM image understanding |\n| Preprocess | cateye_preprocess | Auxiliary | Optimize image size/format for specific tasks |\n| Cache | cateye_cache | Auxiliary | Check/store cached results to avoid redundant API calls |\n\n## Best Practice Scenarios\n\n- Extract text: use cateye_ocr directly\n- Identify character: combine cateye_search + cateye_vision\n- Find anime source: cateye_search with scene=anime\n- Understand meme: cateye_vision with mode=daily\n- Analyze chart: cateye_vision with mode=professional (use sparingly)\n- General inquiry: combine all core tools\n\nUse conversation history for follow-up questions about the same image."
+      },
+      "log_level": {
+        "description": "日志级别",
+        "type": "string",
+        "options": ["DEBUG", "INFO", "WARNING", "ERROR"],
+        "labels": ["DEBUG", "INFO", "WARNING", "ERROR"],
+        "default": "INFO"
+      }
+    }
+  },
+  "image_ocr": {
+    "description": "图片识别 - OCR 设置",
+    "type": "object",
+    "items": {
+      "languages": {
+        "description": "OCR 识别语言列表（如 ch_sim=简体中文, en=英文, ja=日文）",
+        "type": "list",
+        "default": ["ch_sim", "en"]
+      }
+    }
+  },
+  "image_search": {
+    "description": "图片识别 - 搜图设置",
+    "type": "object",
+    "items": {
+      "huawei_enabled": {
+        "description": "启用华为云通用搜索",
+        "type": "bool",
+        "default": false
+      },
+      "huawei_api_key": {
+        "description": "华为云 API Key（X-Auth-Token）",
+        "type": "string",
+        "hint": "在华为云控制台获取"
+      },
+      "huawei_project_id": {
+        "description": "华为云项目 ID",
+        "type": "string",
+        "hint": "在华为云控制台获取"
+      },
+      "tracemoe_enabled": {
+        "description": "启用 trace.moe 番剧识别",
+        "type": "bool",
+        "default": true
+      },
+      "tracemoe_api_key": {
+        "description": "trace.moe API Key（可选，免费版有限额）",
+        "type": "string"
+      },
+      "saucenao_enabled": {
+        "description": "启用 SauceNAO 萌系/插画识别",
+        "type": "bool",
+        "default": true
+      },
+      "saucenao_api_key": {
+        "description": "SauceNAO API Key（推荐，免费版每日限额较少）",
+        "type": "string",
+        "hint": "在 saucenao.com 注册获取"
+      },
+      "custom_providers": {
+        "description": "自定义供应商配置（JSON 格式，高级用户）",
+        "type": "text",
+        "hint": "JSON 格式，例如: [{\"name\": \"custom\", \"url\": \"https://...\", \"api_key\": \"\"}]"
+      }
+    }
+  },
+  "image_vision": {
+    "description": "图片识别 - 大模型设置",
+    "type": "object",
+    "items": {
+      "daily_model": {
+        "description": "日常任务模型（输入 AstrBot 已配置的 Provider ID，如 openai-gpt4o）",
+        "type": "string",
+        "hint": "输入 AstrBot 已配置的对话模型 Provider ID"
+      },
+      "professional_model": {
+        "description": "专业任务模型（输入 AstrBot 已配置的 Provider ID，用于复杂图表分析等）",
+        "type": "string",
+        "hint": "输入 AstrBot 已配置的对话模型 Provider ID，留空则使用日常任务模型"
+      }
+    }
+  },
+  "image_cache": {
+    "description": "图片识别 - 缓存设置",
+    "type": "object",
+    "items": {
+      "cache_ttl_hours": {
+        "description": "缓存有效期（小时）",
+        "type": "float",
+        "default": 1.0
+      },
+      "preprocess_enabled": {
+        "description": "启用图片预处理（自动调整尺寸和格式以优化速度和 token 消耗）",
+        "type": "bool",
+        "default": true
+      }
+    }
   }
 }

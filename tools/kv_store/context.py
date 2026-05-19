@@ -8,11 +8,11 @@ async def get_ai_id(context: ContextWrapper[AstrAgentContext]) -> str:
     try:
         event = context.context.event
         ctx = context.context.context
-        
+
         umo = event.unified_msg_origin
         provider_id = await ctx.get_current_chat_provider_id(umo=umo)
         provider_id = provider_id or "default_provider"
-        
+
         persona_id = "default_persona"
         try:
             conv_mgr = ctx.conversation_manager
@@ -23,7 +23,7 @@ async def get_ai_id(context: ContextWrapper[AstrAgentContext]) -> str:
                     persona_id = conv.persona_id
         except Exception as e:
             logger.debug(f"[KVStore] 获取persona_id失败: {e}")
-        
+
         ai_id = f"{provider_id}:{persona_id}"
         return "".join(c if c.isalnum() or c in "-_:" else "_" for c in ai_id)
     except Exception as e:

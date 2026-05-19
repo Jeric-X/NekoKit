@@ -148,3 +148,7 @@ AI 隔离和会话隔离由**管理员在 WebUI 中配置**，AI 工具调用时
 - 存储引擎：**SQLite**
 - 数据文件位置：`data/nekokit/kvstore.db`
 - 按 AI ID 和会话 ID 自动分区存储
+
+---
+
+> 📖 设计文档：[KV 存储工具集设计](../design/kv_store.md)

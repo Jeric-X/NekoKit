@@ -5,7 +5,7 @@ from .image_analyzer import (
     VisionTool,
     PreprocessTool,
     CacheTool,
-    ImageCache,
+    ScenePresetTool,
 )
 
 __all__ = [
@@ -17,5 +17,5 @@ __all__ = [
     "VisionTool",
     "PreprocessTool",
     "CacheTool",
-    "ImageCache",
+    "ScenePresetTool",
 ]

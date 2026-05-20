@@ -17,7 +17,6 @@ from .tools.image_analyzer import (
     PreprocessTool,
     CacheTool,
     ScenePresetTool,
-    ImageCache,
 )
 from .core import ToolResult
 
@@ -535,7 +534,6 @@ class Main(star.Star):
             self._kv_tool.set_config(kvstore_config)
             logger.info(f"[NekoKit] 已加载配置: {kvstore_config}")
 
-        self._cateye_cache = ImageCache()
         self._init_cateye_tools(config)
 
         self._register_tools()
@@ -545,9 +543,6 @@ class Main(star.Star):
     def _init_cateye_tools(self, config: AstrBotConfig = None) -> None:
         cateye_config = self._build_cateye_config(config)
         proxy_config = self._build_proxy_config(config)
-
-        ttl = cateye_config.get("cache_ttl_hours", 1.0)
-        self._cateye_cache.set_ttl(ttl)
 
         self._ocr_tool = OCRTool()
         self._ocr_tool.initialize(self.data_dir, cateye_config)
@@ -569,11 +564,11 @@ class Main(star.Star):
 
         self._cache_tool = CacheTool()
         self._cache_tool.initialize(
-            self.data_dir, cateye_config, cache=self._cateye_cache
+            self.data_dir, cateye_config, kv_tool=self._kv_tool
         )
 
         self._scene_tool = ScenePresetTool()
-        self._scene_tool.initialize(self.data_dir, cateye_config)
+        self._scene_tool.initialize(self.data_dir, cateye_config, kv_tool=self._kv_tool)
 
     def _build_cateye_config(self, config: AstrBotConfig = None) -> dict:
         cateye_config = {}

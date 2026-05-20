@@ -1,7 +1,6 @@
 import hashlib
 import os
-import time
-from typing import Any, Dict, Optional, Tuple
+from typing import Any, Dict, Tuple
 
 import aiohttp
 from astrbot.api import logger
@@ -11,96 +10,6 @@ PREPROCESS_CONFIG = {
     "search": {"max_size": 1024, "format": "JPEG", "quality": 85},
     "vision": {"max_size": 2048, "format": "JPEG", "quality": 90},
 }
-
-
-class ImageCache:
-    def __init__(
-        self,
-        ttl_hours: float = 1.0,
-        hash_size: int = 8,
-        hamming_threshold: int = 5,
-    ):
-        self._cache: Dict[str, Dict[str, Any]] = {}
-        self._ttl = ttl_hours * 3600
-        self._hash_size = hash_size
-        self._hamming_threshold = hamming_threshold
-
-    def compute_md5(self, image_data: bytes) -> str:
-        return hashlib.md5(image_data).hexdigest()
-
-    def compute_dhash(self, image) -> str:
-        try:
-            from imgdd import dhash
-
-            return dhash(image, hash_size=self._hash_size)
-        except ImportError:
-            logger.warning("[nekokit.cateye] imgdd 未安装，dHash 已禁用")
-            return ""
-
-    def hamming_distance(self, hash1: str, hash2: str) -> int:
-        if not hash1 or not hash2:
-            return 999999
-        try:
-            val1 = int(hash1, 16)
-            val2 = int(hash2, 16)
-            return bin(val1 ^ val2).count("1")
-        except ValueError:
-            return sum(c1 != c2 for c1, c2 in zip(hash1, hash2))
-
-    def find_similar(self, md5: str, dhash_val: str) -> Optional[str]:
-        if md5 in self._cache:
-            entry = self._cache[md5]
-            if time.time() - entry["timestamp"] < self._ttl:
-                return md5
-            else:
-                del self._cache[md5]
-
-        if not dhash_val:
-            return None
-
-        for key, entry in self._cache.items():
-            if time.time() - entry["timestamp"] >= self._ttl:
-                continue
-            entry_dhash = entry.get("dhash", "")
-            if not entry_dhash:
-                continue
-            if self.hamming_distance(dhash_val, entry_dhash) <= self._hamming_threshold:
-                return key
-
-        return None
-
-    def get(self, cache_key: str, task_type: str) -> Optional[Any]:
-        entry = self._cache.get(cache_key)
-        if not entry:
-            return None
-        if time.time() - entry["timestamp"] >= self._ttl:
-            del self._cache[cache_key]
-            return None
-        return entry.get("results", {}).get(task_type)
-
-    def store(
-        self, cache_key: str, dhash_val: str, task_type: str, result: Any
-    ) -> None:
-        if cache_key not in self._cache:
-            self._cache[cache_key] = {
-                "dhash": dhash_val,
-                "timestamp": time.time(),
-                "results": {},
-            }
-        self._cache[cache_key]["results"][task_type] = result
-        self._cache[cache_key]["timestamp"] = time.time()
-
-    def cleanup(self) -> int:
-        now = time.time()
-        expired = [
-            k for k, v in self._cache.items() if now - v["timestamp"] >= self._ttl
-        ]
-        for k in expired:
-            del self._cache[k]
-        return len(expired)
-
-    def set_ttl(self, ttl_hours: float) -> None:
-        self._ttl = ttl_hours * 3600
 
 
 async def download_image(image_url: str, save_dir: str) -> str:

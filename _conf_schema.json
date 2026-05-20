@@ -1,20 +1,85 @@
 {
-  "ai_isolation": {
-    "description": "[数据隔离] 启用后，每个 AI 只能访问自己存储的数据",
-    "type": "bool",
-    "default": true,
-    "hint": "开启后不同 AI 人格之间的数据完全隔离，关闭则所有 AI 共享数据。"
-  },
-  "session_scope": {
-    "description": "[会话作用域] 启用后，数据仅在当前会话内可见",
-    "type": "bool",
-    "default": false,
-    "hint": "开启后每个会话（群聊/私聊）拥有独立的数据空间，关闭则同一 AI 的数据跨会话共享。"
-  },
-  "image_general": {
-    "description": "[图片识别 · 通用] 图片识别工具集的全局设置",
+  "kv_store": {
+    "description": "KV 存储",
     "type": "object",
-    "hint": "控制 Cateye 图片识别工具集的通用行为，包括智能体 Prompt 和日志级别。",
+    "hint": "控制 KV 存储的数据隔离策略。开启 AI 隔离后，不同 AI 人格的数据互不可见；开启会话作用域后，每个群聊/私聊拥有独立数据空间。",
+    "items": {
+      "ai_isolation": {
+        "description": "AI 隔离",
+        "type": "bool",
+        "default": true,
+        "hint": "开启后不同 AI 人格之间的数据完全隔离，关闭则所有 AI 共享数据。"
+      },
+      "session_scope": {
+        "description": "会话作用域",
+        "type": "bool",
+        "default": false,
+        "hint": "开启后每个会话（群聊/私聊）拥有独立的数据空间，关闭则同一 AI 的数据跨会话共享。"
+      }
+    }
+  },
+  "network_proxy": {
+    "description": "网络代理",
+    "type": "object",
+    "hint": "配置插件使用的网络代理服务器。各工具默认不使用代理，搜图工具可单独启用。",
+    "items": {
+      "proxy_url": {
+        "description": "代理服务器 URL",
+        "type": "string",
+        "default": "",
+        "hint": "支持 HTTP、HTTPS、SOCKS5 代理。格式：http://127.0.0.1:8080 或 socks5://127.0.0.1:1080"
+      },
+      "proxy_auth": {
+        "description": "代理认证",
+        "type": "object",
+        "hint": "如果代理服务器需要认证，填写用户名和密码。",
+        "items": {
+          "username": {
+            "description": "用户名",
+            "type": "string",
+            "default": ""
+          },
+          "password": {
+            "description": "密码",
+            "type": "string",
+            "default": ""
+          }
+        }
+      },
+      "search_use_proxy": {
+        "description": "搜图工具使用代理",
+        "type": "bool",
+        "default": true,
+        "hint": "开启后 cateye_search 将通过代理发送搜图请求。"
+      },
+      "proxy_rules": {
+        "description": "代理规则",
+        "type": "object",
+        "hint": "定义域名级别的代理策略。未匹配规则的请求默认使用上方代理配置。",
+        "items": {
+          "custom_rules": {
+            "description": "本地代理规则",
+            "type": "text",
+            "default": "[]",
+            "editor_mode": true,
+            "editor_language": "json",
+            "editor_theme": "vs-dark",
+            "hint": "JSON 数组，按域名指定代理策略。示例：[{\"domain\": \"*.trace.moe\", \"proxy\": \"auto\"}, {\"domain\": \"saucenao.com\", \"proxy\": \"direct\"}]。proxy 值：auto（使用上方配置）、direct（直连）、具体代理 URL。"
+          },
+          "custom_rules_url": {
+            "description": "远程代理规则 URL",
+            "type": "string",
+            "default": "",
+            "hint": "指向返回 JSON 代理规则的 URL，首次调用时自动拉取并缓存 5 分钟。远程规则优先级高于本地规则。"
+          }
+        }
+      }
+    }
+  },
+  "cateye_general": {
+    "description": "Cateye · 通用",
+    "type": "object",
+    "hint": "Cateye 图片识别工具集的全局设置，包括智能体 Prompt 和日志级别。",
     "items": {
       "custom_prompt_enabled": {
         "description": "启用自定义工具使用说明 Prompt",
@@ -23,9 +88,9 @@
         "hint": "开启后下方 Prompt 文本框可编辑，AI 智能体将使用你自定义的工具使用说明。关闭则使用内置默认指南。"
       },
       "custom_prompt": {
-        "description": "自定义工具使用说明 Prompt（仅在启用时生效）",
+        "description": "自定义工具使用说明 Prompt",
         "type": "text",
-        "default": "# Cateye 图片识别工具 - 智能体使用指南\n\nNekoKit 提供了 5 个图片识别工具，统称为 cateye 工具集。\n\n## 工具概览\n\n| 工具 | 名称 | 类型 | 用途 |\n|------|------|------|------|\n| OCR | cateye_ocr | 核心 | 从图片中提取文字 |\n| 以图搜图 | cateye_search | 核心 | 多供应商反向图片搜索 |\n| 视觉理解 | cateye_vision | 核心 | 多模态大模型图片理解 |\n| 预处理 | cateye_preprocess | 辅助 | 按任务类型优化图片尺寸和格式 |\n| 缓存 | cateye_cache | 辅助 | 检查/存储缓存结果，避免重复 API 调用 |\n\n## 最佳实践场景\n\n- 提取文字：直接使用 cateye_ocr\n- 识别角色：组合 cateye_search + cateye_vision\n- 查找番剧出处：cateye_search(scene=\"anime\")\n- 理解表情包：cateye_vision(mode=\"daily\")\n- 分析图表/解题：cateye_vision(mode=\"professional\")（谨慎使用）\n- 通用\"这是什么\"：组合所有核心工具\n\n## 上下文感知\n\n- 同一图片后续提问：利用对话历史，无需重复运行所有工具\n- 多图片关联：对每张图片独立运行工具，综合分析结果\n- 专业模式：仅在复杂图表、学术内容时使用，其他情况用 daily 节省 token\n\n## 错误处理\n\n- 核心工具失败时，尝试替代工具（如 OCR 失败，尝试 vision）\n- 特定供应商失败时，尝试其他供应商或使用 scene=\"auto\"\n- 所有工具都失败时，告知用户限制并说明可能的原因",
+        "default": "# Cateye 图片识别工具 - 智能体使用指南\n\nNekoKit 提供了 5 个图片识别工具，统称为 cateye 工具集。\n\n## 工具概览\n\n| 工具 | 名称 | 类型 | 用途 |\n|------|------|------|------|\n| 哈希 | cateye_hash | 辅助 | 计算图片哈希，生成缓存键 |\n| 预处理 | cateye_preprocess | 辅助 | 按任务类型优化图片尺寸和格式 |\n| OCR | cateye_ocr | 核心 | 从图片中提取文字 |\n| 以图搜图 | cateye_search | 核心 | 多供应商反向图片搜索 |\n| 视觉理解 | cateye_vision | 核心 | 多模态大模型图片理解 |\n\n## 最佳实践场景\n\n- 提取文字：general_ocr\n- 识别角色/物体：identify_subject\n- 综合理解：general_vision\n\n## 缓存管理\n\n缓存通过 kv_store 管理，键格式为 cat_eye:cache:{image_hash}，有效期 48 小时。",
         "editor_mode": true,
         "editor_language": "markdown",
         "editor_theme": "vs-dark",
@@ -37,14 +102,14 @@
         "options": ["DEBUG", "INFO", "WARNING", "ERROR"],
         "labels": ["DEBUG", "INFO", "WARNING", "ERROR"],
         "default": "INFO",
-        "hint": "控制图片识别工具的日志输出详细程度。DEBUG 输出最详细，ERROR 仅输出错误。"
+        "hint": "控制图片识别工具的日志输出详细程度。DEBUG 最详细，ERROR 仅输出错误。"
       }
     }
   },
-  "image_ocr": {
-    "description": "[图片识别 · OCR] 文字识别引擎设置",
+  "cateye_ocr": {
+    "description": "Cateye · OCR",
     "type": "object",
-    "hint": "RapidOCR 基于 ONNX Runtime，无需 GPU 即可高效运行。默认模型支持中文和英文识别，首次使用时会自动下载模型。",
+    "hint": "RapidOCR 基于 ONNX Runtime，无需 GPU 即可高效运行。默认模型支持中文和英文识别，首次使用时自动下载模型。",
     "items": {
       "text_score": {
         "description": "文本置信度阈值",
@@ -54,97 +119,100 @@
       }
     }
   },
-  "image_search": {
-    "description": "[图片识别 · 搜图] 以图搜图供应商设置",
+  "cateye_search": {
+    "description": "Cateye · 搜图",
     "type": "object",
-    "hint": "配置搜图供应商。trace.moe 和 SauceNAO 免费版即可使用，华为云需要 API Key。启用多个供应商可提高搜索成功率。",
+    "hint": "配置以图搜图供应商。trace.moe 和 SauceNAO 免费版即可使用，华为云需要 API Key。启用多个供应商可提高搜索成功率。",
     "items": {
-      "huawei_enabled": {
-        "description": "启用华为云通用搜索",
-        "type": "bool",
-        "default": false,
-        "hint": "华为云适合通用图片搜索（风景、物品等），需要配置 API Key 和项目 ID。"
+      "tracemoe": {
+        "description": "trace.moe 番剧识别",
+        "type": "object",
+        "hint": "专为番剧场景截图识别设计，免费版有限额，付费 Key 可提升限额。",
+        "items": {
+          "enabled": {
+            "description": "启用",
+            "type": "bool",
+            "default": true
+          },
+          "api_key": {
+            "description": "API Key（可选）",
+            "type": "string",
+            "default": "",
+            "hint": "免费版无需 Key，有每日限额。付费 Key 可提升限额。"
+          }
+        }
       },
-      "huawei_api_key": {
-        "description": "华为云 API Key（X-Auth-Token）",
-        "type": "string",
-        "hint": "在华为云控制台 → 统一身份认证 → 获取 Token。"
+      "saucenao": {
+        "description": "SauceNAO 萌系/插画搜索",
+        "type": "object",
+        "hint": "适合二次元插画、漫画、Cosplay 等图片搜索。推荐配置 API Key 以提升限额。",
+        "items": {
+          "enabled": {
+            "description": "启用",
+            "type": "bool",
+            "default": true
+          },
+          "api_key": {
+            "description": "API Key（推荐）",
+            "type": "string",
+            "default": "",
+            "hint": "在 saucenao.com 注册获取。免费版每日限额较少，推荐配置。"
+          }
+        }
       },
-      "huawei_project_id": {
-        "description": "华为云项目 ID",
-        "type": "string",
-        "hint": "在华为云控制台 → 我的项目 中查看。"
-      },
-      "tracemoe_enabled": {
-        "description": "启用 trace.moe 番剧识别",
-        "type": "bool",
-        "default": true,
-        "hint": "trace.moe 专为番剧场景截图识别设计，免费版有限额。"
-      },
-      "tracemoe_api_key": {
-        "description": "trace.moe API Key（可选）",
-        "type": "string",
-        "hint": "免费版无需 Key，有每日限额。付费 Key 可提升限额。"
-      },
-      "saucenao_enabled": {
-        "description": "启用 SauceNAO 萌系/插画识别",
-        "type": "bool",
-        "default": true,
-        "hint": "SauceNAO 适合二次元插画、漫画、Cosplay 等图片搜索。"
-      },
-      "saucenao_api_key": {
-        "description": "SauceNAO API Key（推荐）",
-        "type": "string",
-        "hint": "在 saucenao.com 注册获取。免费版每日限额较少，推荐配置。"
+      "huawei": {
+        "description": "华为云通用搜索",
+        "type": "object",
+        "hint": "适合通用图片搜索（风景、物品等），需要配置 API Key 和项目 ID。",
+        "items": {
+          "enabled": {
+            "description": "启用",
+            "type": "bool",
+            "default": false
+          },
+          "api_key": {
+            "description": "API Key（X-Auth-Token）",
+            "type": "string",
+            "default": "",
+            "hint": "在华为云控制台 → 统一身份认证 → 获取 Token。"
+          },
+          "project_id": {
+            "description": "项目 ID",
+            "type": "string",
+            "default": "",
+            "hint": "在华为云控制台 → 我的项目 中查看。"
+          }
+        }
       },
       "custom_providers": {
-        "description": "【高级】自定义供应商配置",
+        "description": "自定义搜图供应商",
         "type": "text",
         "default": "[]",
         "editor_mode": true,
         "editor_language": "json",
         "editor_theme": "vs-dark",
-        "hint": "JSON 数组格式，允许高级用户添加自定义搜图供应商。示例：[{\"name\": \"custom\", \"url\": \"https://...\", \"api_key\": \"\"}]"
+        "hint": "JSON 数组，每个对象为一个自定义供应商。必填：key、name、url。可选：scene、method、content_type、image_field、image_encoding、headers、params、body、api_key、response_path、result_mapping。示例：[{\"key\": \"google_lens\", \"name\": \"Google Lens\", \"url\": \"https://...\", \"scene\": \"general\", \"content_type\": \"json\", \"image_encoding\": \"base64\", \"image_field\": \"requests.0.image.content\", \"response_path\": \"responses\", \"result_mapping\": {\"title\": \"fullMatchAnnotation\"}}]"
       }
     }
   },
-  "image_vision": {
-    "description": "[图片识别 · 大模型] 视觉理解模型设置",
+  "cateye_vision": {
+    "description": "Cateye · 大模型",
     "type": "object",
     "hint": "配置用于图片理解的多模态大模型。日常模式用于表情包、日常场景；专业模式用于复杂图表分析、习题解答。两个模型都需要在 AstrBot 中已配置。",
     "items": {
       "daily_model": {
-        "description": "日常任务模型 Provider ID",
+        "description": "日常任务模型",
         "type": "string",
         "_special": "select_provider",
         "default": "",
-        "hint": "用于日常图片理解（表情包、场景描述等）。输入 AstrBot 已配置的对话模型 Provider ID，如 openai-gpt4o。"
+        "hint": "用于日常图片理解（表情包、场景描述等）。选择 AstrBot 已配置的对话模型。"
       },
       "professional_model": {
-        "description": "专业任务模型 Provider ID（可选）",
+        "description": "专业任务模型（可选）",
         "type": "string",
         "_special": "select_provider",
         "default": "",
         "hint": "用于复杂图表分析、习题解答等专业场景。留空则日常和专业任务都使用日常模型。推荐使用推理能力更强的模型。"
-      }
-    }
-  },
-  "image_cache": {
-    "description": "[图片识别 · 缓存] 缓存与预处理设置",
-    "type": "object",
-    "hint": "缓存可避免对相同或相似图片重复调用 API，节省时间和费用。预处理会根据任务类型自动优化图片尺寸和格式。",
-    "items": {
-      "cache_ttl_hours": {
-        "description": "缓存有效期（小时）",
-        "type": "float",
-        "default": 1.0,
-        "hint": "超过有效期后缓存自动失效，下次请求将重新调用 API。建议范围 0.5-24。"
-      },
-      "preprocess_enabled": {
-        "description": "启用图片预处理",
-        "type": "bool",
-        "default": true,
-        "hint": "自动调整图片尺寸和格式以优化识别速度和 token 消耗。关闭后图片将原样发送给各引擎。"
       }
     }
   }

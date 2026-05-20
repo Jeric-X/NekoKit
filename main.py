@@ -526,11 +526,12 @@ class Main(star.Star):
         self._kv_tool.initialize(self.data_dir)
 
         if config:
+            kv_store = config.get("kv_store", {})
             kvstore_config = {}
-            if config.get("ai_isolation") is not None:
-                kvstore_config["ai_isolation"] = config.get("ai_isolation")
-            if config.get("session_scope") is not None:
-                kvstore_config["session_scope"] = config.get("session_scope")
+            if kv_store.get("ai_isolation") is not None:
+                kvstore_config["ai_isolation"] = kv_store["ai_isolation"]
+            if kv_store.get("session_scope") is not None:
+                kvstore_config["session_scope"] = kv_store["session_scope"]
             self._kv_tool.set_config(kvstore_config)
             logger.info(f"[NekoKit] 已加载配置: {kvstore_config}")
 
@@ -543,6 +544,7 @@ class Main(star.Star):
 
     def _init_cateye_tools(self, config: AstrBotConfig = None) -> None:
         cateye_config = self._build_cateye_config(config)
+        proxy_config = self._build_proxy_config(config)
 
         ttl = cateye_config.get("cache_ttl_hours", 1.0)
         self._cateye_cache.set_ttl(ttl)
@@ -551,7 +553,9 @@ class Main(star.Star):
         self._ocr_tool.initialize(self.data_dir, cateye_config)
 
         self._search_tool = ImageSearchTool()
-        self._search_tool.initialize(self.data_dir, cateye_config)
+        self._search_tool.initialize(
+            self.data_dir, cateye_config, proxy_config=proxy_config
+        )
 
         self._vision_tool = VisionTool()
         self._vision_tool.initialize(
@@ -576,44 +580,62 @@ class Main(star.Star):
         if not config:
             return cateye_config
 
-        image_general = config.get("image_general", {})
-        cateye_config["log_level"] = image_general.get("log_level", "INFO")
-        cateye_config["custom_prompt_enabled"] = image_general.get(
+        general = config.get("cateye_general", {})
+        cateye_config["log_level"] = general.get("log_level", "INFO")
+        cateye_config["custom_prompt_enabled"] = general.get(
             "custom_prompt_enabled", False
         )
-        cateye_config["custom_prompt"] = image_general.get("custom_prompt", "")
+        cateye_config["custom_prompt"] = general.get("custom_prompt", "")
 
-        image_ocr = config.get("image_ocr", {})
-        cateye_config["ocr_text_score"] = image_ocr.get("text_score", 0.5)
+        ocr = config.get("cateye_ocr", {})
+        cateye_config["ocr_text_score"] = ocr.get("text_score", 0.5)
 
-        image_search = config.get("image_search", {})
+        search = config.get("cateye_search", {})
+        tracemoe = search.get("tracemoe", {})
+        saucenao = search.get("saucenao", {})
+        huawei = search.get("huawei", {})
         search_providers = {
-            "huawei_enabled": image_search.get("huawei_enabled", False),
-            "huawei_api_key": image_search.get("huawei_api_key", ""),
-            "huawei_project_id": image_search.get("huawei_project_id", ""),
-            "tracemoe_enabled": image_search.get("tracemoe_enabled", True),
-            "tracemoe_api_key": image_search.get("tracemoe_api_key", ""),
-            "saucenao_enabled": image_search.get("saucenao_enabled", True),
-            "saucenao_api_key": image_search.get("saucenao_api_key", ""),
-            "custom_providers": image_search.get("custom_providers", ""),
+            "tracemoe_enabled": tracemoe.get("enabled", True),
+            "tracemoe_api_key": tracemoe.get("api_key", ""),
+            "saucenao_enabled": saucenao.get("enabled", True),
+            "saucenao_api_key": saucenao.get("api_key", ""),
+            "huawei_enabled": huawei.get("enabled", False),
+            "huawei_api_key": huawei.get("api_key", ""),
+            "huawei_project_id": huawei.get("project_id", ""),
+            "custom_providers": search.get("custom_providers", ""),
         }
         cateye_config["search_providers"] = search_providers
 
-        image_vision = config.get("image_vision", {})
+        vision = config.get("cateye_vision", {})
         vision_models = {
-            "daily_model": image_vision.get("daily_model", ""),
-            "professional_model": image_vision.get("professional_model", ""),
+            "daily_model": vision.get("daily_model", ""),
+            "professional_model": vision.get("professional_model", ""),
         }
         cateye_config["vision_models"] = vision_models
 
-        image_cache = config.get("image_cache", {})
-        cateye_config["cache_ttl_hours"] = image_cache.get("cache_ttl_hours", 1.0)
-        cateye_config["preprocess_enabled"] = image_cache.get(
-            "preprocess_enabled", True
-        )
-
         logger.info("[nekokit.cateye] 已加载图片识别配置")
         return cateye_config
+
+    def _build_proxy_config(self, config: AstrBotConfig = None) -> dict:
+        proxy_config = {}
+        if not config:
+            return proxy_config
+
+        network_proxy = config.get("network_proxy", {})
+        proxy_config["proxy_url"] = network_proxy.get("proxy_url", "")
+
+        proxy_auth = network_proxy.get("proxy_auth", {})
+        proxy_config["proxy_username"] = proxy_auth.get("username", "")
+        proxy_config["proxy_password"] = proxy_auth.get("password", "")
+
+        proxy_config["search_use_proxy"] = network_proxy.get("search_use_proxy", True)
+
+        proxy_rules = network_proxy.get("proxy_rules", {})
+        proxy_config["custom_rules"] = proxy_rules.get("custom_rules", "[]")
+        proxy_config["custom_rules_url"] = proxy_rules.get("custom_rules_url", "")
+
+        logger.info("[nekokit] 已加载网络代理配置")
+        return proxy_config
 
     def _register_tools(self):
         """注册工具"""

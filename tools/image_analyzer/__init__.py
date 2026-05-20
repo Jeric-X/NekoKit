@@ -4,7 +4,6 @@ from .ocr_tool import OCRTool
 from .preprocess_tool import PreprocessTool
 from .scene_preset_tool import ScenePresetTool
 from .vision_tool import VisionTool
-from ._internal import ImageCache
 
 __all__ = [
     "OCRTool",
@@ -13,5 +12,4 @@ __all__ = [
     "PreprocessTool",
     "CacheTool",
     "ScenePresetTool",
-    "ImageCache",
 ]

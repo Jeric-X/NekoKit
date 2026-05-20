@@ -3,10 +3,21 @@
 ## 0.0.5 (2026-05-20)
 
 ### ✨ 新增
-- 新增场景预设工具 `cateye_scene`，提供 5 个内置场景预设（文字提取、角色识别、番剧溯源、表情包理解、图表分析）
-- 场景预设支持智能体通过 `update` 操作自定义修改方案，实现任务自适应
+- 自定义搜图供应商：支持用户在 WebUI 中通过 JSON 配置自定义搜图服务商，定义统一的供应商接口规范（URL 模板、请求格式、响应解析、字段映射）
+- 网络代理配置功能：`proxy_auth` 认证子分组、`proxy_rules` 规则子分组
+- 搜图供应商嵌套 UI：trace.moe / SauceNAO / 华为云各自独立为 `object` 类型，内部包含 enabled / api_key / project_id 子字段
+- 缓存管理重构：`cateye_cache` 内部调用 kv_store 管理缓存，缓存条目包含工具链路 DAG、分析结果、场景上下文和任务评价
+- 场景预设重构：`cateye_scene` 内部调用 kv_store 管理场景预设，内置 3 个预设（general_ocr、identify_subject、general_vision）
+- 视觉理解上下文注入：`cateye_vision` 新增 6 个上下文参数，动态构建增强系统 Prompt
+- 缓存条目 Value 结构：tool_chain（DAG + 节点列表）、result、context、evaluation、48h 过期时间
 
 ### 🔄 变更
+- 配置 UI 重构：`ai_isolation` / `session_scope` 归入 `kv_store` 分组，`image_*` 统一为 `cateye_*` 前缀
+- 搜图供应商配置从扁平结构改为嵌套结构：`{provider}_enabled` / `{provider}_api_key` → `{provider}.enabled` / `{provider}.api_key`
+- 代理认证配置从扁平字段改为 `proxy_auth` 子分组（username / password）
+- 代理规则配置归入 `proxy_rules` 子分组（custom_rules / custom_rules_url）
+- 移除 `image_cache` 配置节（缓存管理已迁移至 kv_store）
+- `PROVIDERS` 重命名为 `BUILTIN_PROVIDERS`，`SCENE_PROVIDER_MAP` 重命名为 `BUILTIN_SCENE_MAP`
 - OCR 引擎从 EasyOCR 替换为 RapidOCR（基于 ONNX Runtime，无需 GPU，默认支持中英文）
 - 核心工具（OCR/搜图/视觉理解）移除内置缓存和预处理调用，与辅助工具完全解耦
 - 缓存汉明距离计算从字符级改为比特级（XOR + 统计比特位），修正距离度量

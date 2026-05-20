@@ -1,44 +1,42 @@
+import json
 import os
-from typing import Any, Dict
+from datetime import datetime, timedelta, timezone
+from typing import Any, Dict, Optional
 
 from astrbot.api import logger
 
 from ...core import BaseTool, ToolResult
-from ._internal import (
-    ImageCache,
-    compute_image_hashes,
-    download_image,
-)
+from ...tools.kv_store.kv_store_tool import KVStoreTool
+from ._internal import compute_image_hashes, download_image
 
 
 class CacheTool(BaseTool):
     def __init__(self):
         self._data_dir: str = ""
         self._config: Dict[str, Any] = {}
-        self._cache: ImageCache = ImageCache()
+        self._kv_tool: Optional[KVStoreTool] = None
 
     def initialize(
         self,
         data_dir: str,
         config: Dict[str, Any] = None,
-        cache: ImageCache = None,
+        kv_tool: KVStoreTool = None,
         **kwargs,
     ) -> None:
         self._data_dir = data_dir
         if config:
             self._config = config
-        if cache:
-            self._cache = cache
-        ttl = self._config.get("cache_ttl_hours", 1.0)
-        self._cache.set_ttl(ttl)
+        if kv_tool:
+            self._kv_tool = kv_tool
 
     def get_name(self) -> str:
         return "cateye_cache"
 
     def get_description(self) -> str:
         return (
-            "图片缓存工具。检测相似图片是否已被处理过，避免重复调用 API。"
-            "使用 MD5 + dHash 相似度检测。"
+            "图片缓存管理工具。通过内部 KV 存储管理图片分析缓存，"
+            "支持查询缓存、存储结果、更新条目。"
+            "缓存键格式为 cat_eye:cache:{image_hash}，有效期 48 小时。"
         )
 
     def get_parameters(self) -> Dict[str, Any]:
@@ -49,92 +47,229 @@ class CacheTool(BaseTool):
                     "type": "string",
                     "description": "图片 URL 或本地文件路径",
                 },
-                "task_type": {
-                    "type": "string",
-                    "description": "任务类型：ocr（文字识别）、search（搜图）或 vision（大模型）",
-                    "enum": ["ocr", "search", "vision"],
-                },
                 "action": {
                     "type": "string",
-                    "description": "操作：check（查询缓存）或 store（保存结果）",
-                    "enum": ["check", "store"],
+                    "description": (
+                        "操作类型："
+                        "check（查询缓存，返回命中结果或空）、"
+                        "store（存储新的缓存条目）、"
+                        "update（更新已有缓存条目，合并结果并刷新过期时间）"
+                    ),
+                    "enum": ["check", "store", "update"],
+                },
+                "tool_chain_dag": {
+                    "type": "string",
+                    "description": "工具链路 DAG 描述（store/update 时必填）",
+                },
+                "tool_chain_nodes": {
+                    "type": "string",
+                    "description": "工具节点列表 JSON 字符串（store/update 时必填）",
                 },
                 "result": {
                     "type": "string",
-                    "description": "要存储的结果数据（store 操作时必填）",
+                    "description": "各工具返回结果 JSON 字符串（store/update 时必填）",
+                },
+                "context_scene": {
+                    "type": "string",
+                    "description": "场景预设名称（store 时可选）",
+                },
+                "context_scene_description": {
+                    "type": "string",
+                    "description": "场景描述（store 时可选）",
+                },
+                "context_user_intent": {
+                    "type": "string",
+                    "description": "用户意图关键词，逗号分隔（store 时可选）",
+                },
+                "context_distilled": {
+                    "type": "string",
+                    "description": "蒸馏的上下文摘要（store 时可选）",
+                },
+                "evaluation": {
+                    "type": "integer",
+                    "description": "任务评价，范围 [-2, 2]（update 时可选）",
                 },
             },
-            "required": ["image_url", "task_type", "action"],
+            "required": ["image_url", "action"],
         }
 
     async def execute(self, **kwargs) -> ToolResult:
+        if not self._kv_tool:
+            return ToolResult(success=False, message="KVStoreTool 未初始化")
+
         image_url = kwargs.get("image_url", "")
-        task_type = kwargs.get("task_type", "vision")
-        action = kwargs.get("action", "check")
-        result_data = kwargs.get("result")
+        action = kwargs.get("action", "")
 
         if not image_url:
             return ToolResult(success=False, message="必须提供 image_url")
-
-        if task_type not in ("ocr", "search", "vision"):
-            return ToolResult(
-                success=False,
-                message=f"无效的 task_type: {task_type}，必须为 ocr/search/vision",
-            )
+        if not action:
+            return ToolResult(success=False, message="必须提供 action")
 
         try:
             img_dir = os.path.join(self._data_dir, "cateye", "images")
             image_path = await download_image(image_url, img_dir)
-
-            md5, dhash_val = compute_image_hashes(image_path)
+            md5_val, dhash_val = compute_image_hashes(image_path)
+            image_hash = f"{md5_val}_{dhash_val}" if dhash_val else md5_val
+            cache_key = f"cat_eye:cache:{image_hash}"
 
             if action == "check":
-                cache_key = self._cache.find_similar(md5, dhash_val)
-                if cache_key:
-                    cached_result = self._cache.get(cache_key, task_type)
-                    if cached_result is not None:
-                        logger.info(
-                            f"[nekokit.cateye] {task_type} 缓存命中: {md5[:8]}..."
-                        )
-                        return ToolResult(
-                            success=True,
-                            message="缓存命中",
-                            data={
-                                "cached": True,
-                                "task_type": task_type,
-                                "result": cached_result,
-                            },
-                        )
-
-                logger.info(f"[nekokit.cateye] {task_type} 缓存未命中: {md5[:8]}...")
-                return ToolResult(
-                    success=True,
-                    message="缓存未命中",
-                    data={"cached": False, "task_type": task_type},
-                )
-
+                return await self._check_cache(cache_key)
             elif action == "store":
-                if result_data is None:
-                    return ToolResult(
-                        success=False,
-                        message="store 操作需要提供 result",
-                    )
-
-                cache_key = md5
-                self._cache.store(cache_key, dhash_val, task_type, result_data)
-                logger.info(f"[nekokit.cateye] 已缓存 {task_type} 结果: {md5[:8]}...")
-                return ToolResult(
-                    success=True,
-                    message="结果已缓存",
-                    data={"cached": True, "task_type": task_type, "key": md5[:8]},
-                )
-
+                return await self._store_cache(cache_key, kwargs)
+            elif action == "update":
+                return await self._update_cache(cache_key, kwargs)
             else:
-                return ToolResult(
-                    success=False,
-                    message=f"无效的 action: {action}，必须为 check/store",
-                )
+                return ToolResult(success=False, message=f"未知操作: {action}")
 
         except Exception as e:
             logger.error(f"[nekokit.cateye] 缓存操作失败: {e}")
             return ToolResult(success=False, message=f"缓存操作失败: {str(e)}")
+
+    async def _check_cache(self, cache_key: str) -> ToolResult:
+        result = await self._kv_tool.execute(action="get", key=cache_key)
+        if not result.success:
+            return ToolResult(success=True, message="缓存未命中", data={"hit": False})
+
+        try:
+            entry = json.loads(result.data.get("value", "{}"))
+        except (json.JSONDecodeError, AttributeError):
+            return ToolResult(success=True, message="缓存未命中", data={"hit": False})
+
+        expires_at = entry.get("expires_at", "")
+        if expires_at:
+            try:
+                expire_dt = datetime.fromisoformat(expires_at)
+                if datetime.now(timezone.utc) > expire_dt:
+                    await self._kv_tool.execute(action="delete", key=cache_key)
+                    return ToolResult(
+                        success=True,
+                        message="缓存已过期，已清除",
+                        data={"hit": False, "expired": True},
+                    )
+            except ValueError:
+                pass
+
+        return ToolResult(
+            success=True,
+            message="缓存命中",
+            data={"hit": True, "cache_key": cache_key, "entry": entry},
+        )
+
+    async def _store_cache(self, cache_key: str, kwargs: Dict[str, Any]) -> ToolResult:
+        now = datetime.now(timezone.utc)
+        expires_at = now + timedelta(hours=48)
+
+        tool_chain_dag = kwargs.get("tool_chain_dag", "")
+        tool_chain_nodes_str = kwargs.get("tool_chain_nodes", "[]")
+        result_str = kwargs.get("result", "{}")
+
+        try:
+            tool_chain_nodes = json.loads(tool_chain_nodes_str)
+        except json.JSONDecodeError:
+            tool_chain_nodes = []
+
+        try:
+            result_data = json.loads(result_str)
+        except json.JSONDecodeError:
+            result_data = {}
+
+        entry = {
+            "tool_chain": {
+                "dag": tool_chain_dag,
+                "nodes": tool_chain_nodes,
+            },
+            "result": result_data,
+            "context": {
+                "scene": kwargs.get("context_scene", ""),
+                "scene_description": kwargs.get("context_scene_description", ""),
+                "user_intent_keywords": [
+                    k.strip()
+                    for k in kwargs.get("context_user_intent", "").split(",")
+                    if k.strip()
+                ],
+                "distilled_context": kwargs.get("context_distilled", ""),
+            },
+            "evaluation": 0,
+            "created_at": now.isoformat(),
+            "expires_at": expires_at.isoformat(),
+        }
+
+        value_json = json.dumps(entry, ensure_ascii=False)
+        store_result = await self._kv_tool.execute(
+            action="set", key=cache_key, value=value_json
+        )
+
+        if store_result.success:
+            logger.info(f"[nekokit.cateye] 缓存已存储: {cache_key[:32]}...")
+            return ToolResult(
+                success=True,
+                message="缓存已存储",
+                data={"cache_key": cache_key, "expires_at": expires_at.isoformat()},
+            )
+        return ToolResult(success=False, message="缓存存储失败")
+
+    async def _update_cache(self, cache_key: str, kwargs: Dict[str, Any]) -> ToolResult:
+        check_result = await self._check_cache(cache_key)
+        if not check_result.data.get("hit"):
+            return await self._store_cache(cache_key, kwargs)
+
+        entry = check_result.data.get("entry", {})
+
+        tool_chain_dag = kwargs.get("tool_chain_dag", "")
+        if tool_chain_dag:
+            entry["tool_chain"]["dag"] = tool_chain_dag
+
+        tool_chain_nodes_str = kwargs.get("tool_chain_nodes", "")
+        if tool_chain_nodes_str:
+            try:
+                entry["tool_chain"]["nodes"] = json.loads(tool_chain_nodes_str)
+            except json.JSONDecodeError:
+                pass
+
+        result_str = kwargs.get("result", "")
+        if result_str:
+            try:
+                new_result = json.loads(result_str)
+                entry["result"].update(new_result)
+            except json.JSONDecodeError:
+                pass
+
+        context_scene = kwargs.get("context_scene", "")
+        if context_scene:
+            entry["context"]["scene"] = context_scene
+        context_scene_description = kwargs.get("context_scene_description", "")
+        if context_scene_description:
+            entry["context"]["scene_description"] = context_scene_description
+        context_user_intent = kwargs.get("context_user_intent", "")
+        if context_user_intent:
+            entry["context"]["user_intent_keywords"] = [
+                k.strip() for k in context_user_intent.split(",") if k.strip()
+            ]
+        context_distilled = kwargs.get("context_distilled", "")
+        if context_distilled:
+            entry["context"]["distilled_context"] = context_distilled
+
+        if "evaluation" in kwargs:
+            evaluation = kwargs.get("evaluation", 0)
+            evaluation = max(-2, min(2, int(evaluation)))
+            entry["evaluation"] = evaluation
+
+        now = datetime.now(timezone.utc)
+        entry["expires_at"] = (now + timedelta(hours=48)).isoformat()
+
+        value_json = json.dumps(entry, ensure_ascii=False)
+        store_result = await self._kv_tool.execute(
+            action="set", key=cache_key, value=value_json
+        )
+
+        if store_result.success:
+            logger.info(f"[nekokit.cateye] 缓存已更新: {cache_key[:32]}...")
+            return ToolResult(
+                success=True,
+                message="缓存已更新",
+                data={
+                    "cache_key": cache_key,
+                    "expires_at": entry["expires_at"],
+                },
+            )
+        return ToolResult(success=False, message="缓存更新失败")

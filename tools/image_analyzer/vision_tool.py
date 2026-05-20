@@ -32,7 +32,7 @@ class VisionTool(BaseTool):
     def get_description(self) -> str:
         return (
             "视觉理解工具。调用多模态大模型对图片进行理解、描述或推理。"
-            "支持日常模式（表情包、日常场景）和专业模式（复杂图表分析、习题解答）。"
+            "支持日常模式和专业模式。可注入场景上下文以增强分析效果。"
         )
 
     def get_parameters(self) -> Dict[str, Any]:
@@ -54,6 +54,30 @@ class VisionTool(BaseTool):
                         "或 professional（专业任务，如复杂图表分析、习题解答）"
                     ),
                     "enum": ["daily", "professional"],
+                },
+                "scene_name": {
+                    "type": "string",
+                    "description": "场景预设名称（可选，用于上下文注入）",
+                },
+                "scene_description": {
+                    "type": "string",
+                    "description": "场景描述（可选，配合 scene_name 使用）",
+                },
+                "tool_chain_dag": {
+                    "type": "string",
+                    "description": "工具链路 DAG 描述，如 cateye_preprocess(ocr) → cateye_ocr（可选）",
+                },
+                "user_intent_keywords": {
+                    "type": "string",
+                    "description": "用户意图关键词，逗号分隔（可选，用于上下文注入）",
+                },
+                "distilled_context": {
+                    "type": "string",
+                    "description": "从会话上下文蒸馏的关键信息摘要（可选）",
+                },
+                "cached_results": {
+                    "type": "string",
+                    "description": "前序工具的缓存结果 JSON 字符串（可选，用于结果整合）",
                 },
             },
             "required": ["image_url", "prompt"],
@@ -83,12 +107,17 @@ class VisionTool(BaseTool):
                     message=f"插件设置中未配置 {mode} 模型",
                 )
 
-            system_prompt = self._build_system_prompt(mode)
+            system_prompt = self._build_system_prompt(mode, **kwargs)
             b64_url = image_to_base64_url(image_path)
+
+            user_prompt = prompt
+            cached_results = kwargs.get("cached_results", "")
+            if cached_results:
+                user_prompt = f"{prompt}\n\n前序工具结果：\n{cached_results}"
 
             llm_resp = await self._star_context.llm_generate(
                 chat_provider_id=provider_id,
-                prompt=prompt,
+                prompt=user_prompt,
                 image_urls=[b64_url],
                 system_prompt=system_prompt,
             )
@@ -112,15 +141,47 @@ class VisionTool(BaseTool):
             return vision_config.get("professional_model", "")
         return vision_config.get("daily_model", "")
 
-    def _build_system_prompt(self, mode: str) -> str:
+    def _build_system_prompt(self, mode: str, **kwargs) -> str:
         if mode == "professional":
-            return (
+            base = (
                 "你是一个专业的图片分析助手。"
                 "请对复杂图片（如图表、技术图纸、学术问题等）提供详细、准确的分析。"
                 "分析要全面且精确。"
             )
-        return (
-            "你是一个友好的图片理解助手。"
-            "请用自然、对话式的方式描述和分析图片。"
-            "简洁但信息丰富。"
+        else:
+            base = (
+                "你是一个友好的图片理解助手。"
+                "请用自然、对话式的方式描述和分析图片。"
+                "简洁但信息丰富。"
+            )
+
+        scene_name = kwargs.get("scene_name", "")
+        scene_description = kwargs.get("scene_description", "")
+        tool_chain_dag = kwargs.get("tool_chain_dag", "")
+        user_intent_keywords = kwargs.get("user_intent_keywords", "")
+        distilled_context = kwargs.get("distilled_context", "")
+
+        has_context = any(
+            [scene_name, tool_chain_dag, user_intent_keywords, distilled_context]
         )
+        if not has_context:
+            return base
+
+        parts = ["你正在使用 CatEye 视觉分析工具。以下是当前任务的背景信息："]
+
+        if scene_name:
+            desc = f" — {scene_description}" if scene_description else ""
+            parts.append(f"- 场景预设：{scene_name}{desc}")
+        if tool_chain_dag:
+            parts.append(f"- 工具链路：{tool_chain_dag}")
+        if user_intent_keywords:
+            parts.append(f"- 任务需求：{user_intent_keywords}")
+        if distilled_context:
+            parts.append(f"- 上下文摘要：{distilled_context}")
+
+        parts.append(
+            "请基于以上背景，结合图片内容进行分析。"
+            "如有从缓存或前序工具获取的结果，请优先参考并整合。"
+        )
+
+        return base + "\n\n" + "\n".join(parts)

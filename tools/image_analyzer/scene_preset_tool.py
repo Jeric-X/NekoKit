@@ -112,9 +112,12 @@ BUILTIN_PRESETS = {
     },
     "analyze_chart": {
         "name": "图片分析",
-        "description": "分析游戏截图、攻略图、数据图表等，适合讨论游戏攻略和数据分析",
+        "description": (
+            "分析图片内容。日常场景（游戏截图、活动图、地图、配装等）使用 daily 模式；"
+            "涉及数据、图表、文字、复杂逻辑时使用 professional 模式"
+        ),
         "tool_chain": ["cateye_preprocess", "cateye_vision"],
-        "model_preference": "professional",
+        "model_preference": "",
         "trigger_keywords": [
             "分析一下",
             "看看这个",

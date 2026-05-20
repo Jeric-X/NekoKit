@@ -133,7 +133,9 @@
 | `identify_character` | 角色识别 | preprocess → search → preprocess → vision | 这是谁、角色识别、认人、动漫角色、游戏角色、虚拟主播 |
 | `find_anime_source` | 番剧溯源 | preprocess → search | 这是什么番、番名、动漫名称、哪一集、找番、认番 |
 | `understand_meme` | 表情包解读 | preprocess → vision | 梗图、表情包、什么意思、笑点、玩梗、斗图 |
-| `analyze_chart` | 图片分析 | preprocess → vision（professional 模式） | 分析一下、游戏截图、攻略、面板、配装、抽卡 |
+| `analyze_chart` | 图片分析 | preprocess → vision（根据内容自动选择模式） | 分析一下、游戏截图、攻略、面板、配装、抽卡 |
+
+通用内容（游戏截图、活动图、地图等）使用 daily 模式；涉及数据、图表、复杂逻辑时使用 professional 模式。
 
 ### 动态添加场景
 
@@ -255,7 +257,8 @@ cateye_cache(image_url="...", action="update", evaluation=1)
 | 识别动漫/游戏角色 | `identify_character` | preprocess(search) → search → preprocess(vision) → vision |
 | 查找番剧出处 | `find_anime_source` | preprocess(search) → search |
 | 解读表情包含义 | `understand_meme` | preprocess(vision) → vision |
-| 分析游戏截图/攻略 | `analyze_chart` | preprocess(vision) → vision（professional 模式） |
+| 分析游戏截图/攻略（日常） | `analyze_chart` | preprocess(vision) → vision（daily 模式） |
+| 分析数据图/表格/复杂场景 | `analyze_chart` | preprocess(vision) → vision（professional 模式） |
 
 ### 复杂任务指南
 

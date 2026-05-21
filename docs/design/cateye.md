@@ -292,6 +292,18 @@ class CateyeServices:
 
 ---
 
+## 平台配置建议
+
+使用 CatEye 工具集时，建议在 AstrBot WebUI 中将 **图片转述模型**（`provider_settings.default_image_caption_provider_id`）留空。原因：
+
+1. **避免双重视觉调用**：AstrBot 框架的图片转述功能会在用户发送图片时自动调用视觉模型生成文字描述，然后清空原始图片 URL。如果同时启用了 CatEye 的 `nkit_ce_vision`，同一张图片会被两个视觉模型重复处理，导致响应延迟和 Token 浪费
+2. **保留原始图片**：框架转述后会清空 `req.image_urls`，导致多模态 LLM 无法直接看到图片。CatEye 的 `nkit_ce_vision` 通过独立的视觉模型调用处理图片，不依赖框架的转述机制
+3. **按需调用更灵活**：CatEye 的视觉理解由 AI 按需调用，只在用户明确需要图片分析时才消耗视觉模型资源；框架转述则对每张图片都无条件触发
+
+配置路径：AstrBot WebUI → 提供商设置 → 图片转述模型 → 留空
+
+---
+
 ## 未来方向
 
 - 内部评价体系：基于历史评价数据为智能体提供工具组合偏好参考

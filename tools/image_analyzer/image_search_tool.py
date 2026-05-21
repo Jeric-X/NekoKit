@@ -9,7 +9,7 @@ import aiohttp
 from astrbot.api import logger
 
 from ...core import BaseTool, ToolResult
-from ._internal import download_image
+from ._internal import download_image, preprocess_image
 
 BUILTIN_PROVIDERS = {
     "huawei": {
@@ -67,12 +67,14 @@ class ImageSearchTool(BaseTool):
         self._cached_remote_rules: Optional[List[Dict[str, Any]]] = None
         self._last_rules_fetch: float = 0.0
         self._rules_cache_ttl: float = 300.0
+        self._services = None
 
     def initialize(
         self,
         data_dir: str,
         config: Dict[str, Any] = None,
         proxy_config: Dict[str, Any] = None,
+        services=None,
         **kwargs,
     ) -> None:
         self._data_dir = data_dir
@@ -80,6 +82,8 @@ class ImageSearchTool(BaseTool):
             self._config = config
         if proxy_config:
             self._proxy_config = proxy_config
+        if services:
+            self._services = services
 
         self._providers = dict(BUILTIN_PROVIDERS)
         self._scene_map = dict(BUILTIN_SCENE_MAP)
@@ -143,7 +147,7 @@ class ImageSearchTool(BaseTool):
             )
 
     def get_name(self) -> str:
-        return "cateye_search"
+        return "nkit_ce_search"
 
     def get_description(self) -> str:
         provider_names = "、".join(p["name"] for p in self._providers.values())
@@ -201,8 +205,27 @@ class ImageSearchTool(BaseTool):
             return ToolResult(success=False, message="必须提供 image_url")
 
         try:
+            if self._services and self._services.cache:
+                cache_result = await self._services.cache.execute(
+                    action="check", image_url=image_url, task_type="search"
+                )
+                if cache_result.success and cache_result.data.get("hit"):
+                    entry = cache_result.data.get("entry", {})
+                    cached_result = entry.get("result", {}).get("search_results")
+                    if cached_result is not None:
+                        logger.info("[nekokit.cateye] 搜图缓存命中")
+                        return ToolResult(
+                            success=True,
+                            message="搜图完成（缓存）",
+                            data={"results": cached_result, "cached": True},
+                        )
+
             img_dir = os.path.join(self._data_dir, "cateye", "images")
             image_path = await download_image(image_url, img_dir)
+
+            if self._services and self._services.preprocess:
+                output_dir = os.path.join(self._data_dir, "cateye", "preprocessed")
+                image_path = preprocess_image(image_path, "search", output_dir)
 
             providers_to_try = self._resolve_providers(scene, provider)
 
@@ -217,6 +240,34 @@ class ImageSearchTool(BaseTool):
                 except Exception as e:
                     logger.warning(f"[nekokit.cateye] 供应商 {prov_key} 失败: {e}")
                     continue
+
+            if self._services and self._services.cache:
+                await self._services.cache.execute(
+                    action="store",
+                    image_url=image_url,
+                    task_type="search",
+                    result=json.dumps({"search_results": all_results}),
+                )
+
+            if self._services and self._services.context and all_results:
+                top_result = all_results[0]
+                summary_parts = []
+                if top_result.get("title"):
+                    summary_parts.append(top_result["title"])
+                if top_result.get("anime"):
+                    summary_parts.append(top_result["anime"])
+                if top_result.get("source"):
+                    summary_parts.append(top_result["source"])
+                summary = (
+                    ", ".join(str(p) for p in summary_parts[:3])
+                    if summary_parts
+                    else "找到结果"
+                )
+                await self._services.context.add_knowledge(
+                    image_url,
+                    source="nkit_ce_search",
+                    content=summary[:200],
+                )
 
             if not all_results:
                 return ToolResult(

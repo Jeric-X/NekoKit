@@ -22,7 +22,7 @@ nekokit/
 │   │   ├── kv_store.md          # KV 存储工具集设计文档
 │   │   └── cateye.md            # CatEye 图片识别工具集设计文档
 │   └── developer/
-│       └── architecture.md      # 本文件 — 项目架构文档
+│       └── architecture.md      # 本文件 -- 项目架构文档
 └── tools/
     ├── __init__.py              # 统一导出
     ├── kv_store/                # KV 存储子包
@@ -36,9 +36,13 @@ nekokit/
         ├── ocr_tool.py          # OCR 工具（RapidOCR）
         ├── image_search_tool.py # 以图搜图工具（内置 3 供应商 + 自定义供应商通用调用）
         ├── vision_tool.py       # 视觉理解工具
-        ├── preprocess_tool.py   # 预处理工具
-        ├── cache_tool.py        # 缓存工具（内部调用 kv_store）
-        └── scene_preset_tool.py # 场景预设工具（内部调用 kv_store）
+        ├── preprocess_tool.py   # 预处理工具（内部，不暴露给 AI）
+        ├── cache_tool.py        # 缓存工具（内部，不暴露给 AI）
+        ├── scene_preset_tool.py # 场景预设工具
+        ├── cateye_services.py   # CateyeServices 依赖容器
+        ├── image_context_manager.py # 图片认知上下文管理器
+        ├── memory_bridge.py     # MemoryBridge 协议定义
+        └── angel_memory_bridge.py   # 天使之魂记忆桥接实现
 ```
 
 ## 分层架构
@@ -46,20 +50,24 @@ nekokit/
 ```
 ┌──────────────────────────────────────────────────────────────────────┐
 │                         FunctionTool 层                              │  main.py
-│  get_kv | set_kv | delete_kv | list_kv                              │
-│  cateye_ocr | cateye_search | cateye_vision | cateye_preprocess     │
-│  cateye_cache | cateye_scene                                        │
+│  nkit_kv_get | nkit_kv_set | nkit_kv_delete | nkit_kv_list          │
+│  nkit_ce_ocr | nkit_ce_search | nkit_ce_vision | nkit_ce_scene      │
 ├──────────────────────────────┬───────────────────────────────────────┤
 │     KVStoreTool (BaseTool)   │     CatEye 工具集 (BaseTool)          │
 │  业务逻辑、命名空间策略、     │  OCRTool | ImageSearchTool            │
-│  配置管理                    │  VisionTool | PreprocessTool          │
-│                              │  CacheTool ──→ KVStoreTool            │
-│                              │  ScenePresetTool ──→ KVStoreTool      │
+│  配置管理                    │  VisionTool | ScenePresetTool          │
+│                              │  内部工具：PreprocessTool             │
+│                              │           CacheTool ──→ KVStoreTool   │
+│                              │           ImageContextManager         │
+│                              │  依赖容器：CateyeServices             │
+│                              │  桥接协议：MemoryBridge               │
+│                              │           AngelMemoryBridge           │
 │                              │  共享 _internal                       │
 ├──────────────────────────────┼───────────────────────────────────────┤
 │      StorageBackend          │           外部服务                     │
 │     SQLite 存储引擎          │  RapidOCR | trace.moe | SauceNAO      │
 │                              │  华为云 | AstrBot LLM                 │
+│                              │  天使之魂 MemoryRuntime（可选）        │
 └──────────────────────────────┴───────────────────────────────────────┘
 ```
 
@@ -67,14 +75,18 @@ nekokit/
 
 | 层次 | 文件 | 职责 |
 |------|------|------|
-| **FunctionTool** | `main.py` | 定义 10 个独立的 AstrBot FunctionTool，每个工具负责：参数校验、调用 BaseTool、结果转换 |
+| **FunctionTool** | `main.py` | 定义 8 个独立的 AstrBot FunctionTool，每个工具负责：参数校验、调用 BaseTool、结果转换 |
 | **BaseTool - KV** | `tools/kv_store/kv_store_tool.py` | 实现 `KVStoreTool(BaseTool)`，包含核心业务逻辑：action 分发、命名空间构建、配置读取 |
-| **BaseTool - OCR** | `tools/image_analyzer/ocr_tool.py` | 实现 `OCRTool(BaseTool)`，RapidOCR 文字识别 + 线程池异步 |
-| **BaseTool - 搜图** | `tools/image_analyzer/image_search_tool.py` | 实现 `ImageSearchTool(BaseTool)`，多供应商搜图 + 场景自动选择 |
-| **BaseTool - 视觉** | `tools/image_analyzer/vision_tool.py` | 实现 `VisionTool(BaseTool)`，双模式大模型视觉理解 + 上下文注入 |
-| **BaseTool - 预处理** | `tools/image_analyzer/preprocess_tool.py` | 实现 `PreprocessTool(BaseTool)`，按任务类型预设参数表优化图片 |
-| **BaseTool - 缓存** | `tools/image_analyzer/cache_tool.py` | 实现 `CacheTool(BaseTool)`，内部调用 KVStoreTool 管理缓存 |
+| **BaseTool - OCR** | `tools/image_analyzer/ocr_tool.py` | 实现 `OCRTool(BaseTool)`，RapidOCR 文字识别 + 线程池异步，内化缓存和预处理 |
+| **BaseTool - 搜图** | `tools/image_analyzer/image_search_tool.py` | 实现 `ImageSearchTool(BaseTool)`，多供应商搜图 + 场景自动选择，内化缓存和预处理 |
+| **BaseTool - 视觉** | `tools/image_analyzer/vision_tool.py` | 实现 `VisionTool(BaseTool)`，双模式大模型视觉理解，内化缓存、预处理和上下文注入 |
 | **BaseTool - 场景** | `tools/image_analyzer/scene_preset_tool.py` | 实现 `ScenePresetTool(BaseTool)`，内部调用 KVStoreTool 管理场景预设 |
+| **BaseTool - 预处理** | `tools/image_analyzer/preprocess_tool.py` | 实现 `PreprocessTool(BaseTool)`，按任务类型预设参数表优化图片（内部工具） |
+| **BaseTool - 缓存** | `tools/image_analyzer/cache_tool.py` | 实现 `CacheTool(BaseTool)`，内部调用 KVStoreTool 管理缓存（内部工具） |
+| **依赖容器** | `tools/image_analyzer/cateye_services.py` | `CateyeServices` 数据类，统一注入 preprocess/cache/context 服务 |
+| **Context 管理** | `tools/image_analyzer/image_context_manager.py` | `ImageContextManager`，管理图片认知上下文，7 天 TTL，支持桥接后端 |
+| **桥接协议** | `tools/image_analyzer/memory_bridge.py` | `MemoryBridge` Protocol，定义外部记忆系统接入接口 |
+| **天使之魂桥接** | `tools/image_analyzer/angel_memory_bridge.py` | `AngelMemoryBridge`，桥接到天使之魂记忆插件的 MemoryRuntime |
 | **StorageBackend** | `tools/kv_store/storage.py` | 实现 `SQLiteStorageBackend`，封装 SQLite 增删改查操作 |
 | **Core 抽象** | `core.py` | 定义 `StorageBackend`、`NamespaceStrategy`、`BaseTool`、`ToolResult` 等抽象基类 |
 | **Context** | `tools/kv_store/context.py` | 从 AstrBot 运行时上下文提取 AI ID 和会话 ID |
@@ -85,12 +97,25 @@ nekokit/
 ```
 StorageBackend (ABC)        NamespaceStrategy (ABC)        BaseTool (ABC)
     └── SQLiteStorageBackend     └── DefaultNamespaceStrategy   ├── KVStoreTool
-                                                               ├── OCRTool
-                                                               ├── ImageSearchTool
-                                                               ├── VisionTool
+                                                               ├── OCRTool ──→ CateyeServices
+                                                               ├── ImageSearchTool ──→ CateyeServices
+                                                               ├── VisionTool ──→ CateyeServices
+                                                               ├── ScenePresetTool ──→ KVStoreTool
                                                                ├── PreprocessTool
-                                                               ├── CacheTool ──→ KVStoreTool
-                                                               └── ScenePresetTool ──→ KVStoreTool
+                                                               └── CacheTool ──→ KVStoreTool
+
+CateyeServices (dataclass)
+    ├── preprocess: PreprocessTool
+    ├── cache: CacheTool
+    └── context: Optional[ImageContextManager]
+
+ImageContextManager
+    ├── _kv_tool: KVStoreTool
+    ├── _bridge: Optional[MemoryBridge]
+    └── ImageContext / KnowledgeEntry
+
+MemoryBridge (Protocol)
+    └── AngelMemoryBridge ──→ MemoryRuntime (天使之魂)
 
 ToolResult
   ├── success
@@ -105,24 +130,24 @@ FunctionTool (AstrBot)
     ├── CateyeOCRTool      ──→  OCRTool.execute()
     ├── CateyeSearchTool   ──→  ImageSearchTool.execute()
     ├── CateyeVisionTool   ──→  VisionTool.execute()
-    ├── CateyePreprocessTool ──→  PreprocessTool.execute()
-    ├── CateyeCacheTool    ──→  CacheTool.execute() ──→ KVStoreTool
-    └── CateyeSceneTool   ──→  ScenePresetTool.execute() ──→ KVStoreTool
+    └── CateyeSceneTool    ──→  ScenePresetTool.execute() ──→ KVStoreTool
 ```
 
 ## 双层抽象设计
 
 NekoKit 采用**双层抽象**模式组织所有工具：
 
-- **BaseTool 层**（`core.py` 定义抽象基类）：实现业务逻辑，不依赖 AstrBot 框架细节。每个工具继承 `BaseTool`，实现 `get_schema()` 和 `async execute(**kwargs)` 方法。
+- **BaseTool 层**（`core.py` 定义抽象基类）：实现业务逻辑，不依赖 AstrBot 框架细节。每个工具继承 `BaseTool`，实现 `get_name()`、`get_description()`、`get_parameters()` 和 `async execute(**kwargs)` 方法。
 - **FunctionTool 层**（`main.py` 中定义）：适配 AstrBot 框架，负责参数校验、上下文注入、结果转换。通过 `create_with_tool()` 工厂方法将 BaseTool 包装为 FunctionTool。
+
+核心工具（OCR/Search/Vision）通过 `CateyeServices` 依赖容器获得预处理、缓存和上下文服务，这些横切关注点在 BaseTool 层内部自动完成，对 FunctionTool 层透明。
 
 ## 数据流
 
 ### KV 存储数据流
 
 ```
-AI 调用 (get_kv/set_kv/delete_kv/list_kv)
+AI 调用 (nkit_kv_get/nkit_kv_set/nkit_kv_delete/nkit_kv_list)
         │
         ▼
 FunctionTool.call(context, **kwargs)
@@ -140,28 +165,65 @@ KVStoreTool.execute(action=..., **kwargs)
         SQLite (data/nekokit/kvstore.db)
 ```
 
-### CatEye 缓存数据流
+### CatEye 核心工具数据流
 
-CacheTool 和 ScenePresetTool 内部持有 KVStoreTool 引用，通过 `kv_tool.execute()` 调用底层存储：
+核心工具内部自动执行缓存检查、预处理、核心逻辑、缓存写入和上下文记录：
 
 ```
-AI 调用 cateye_cache(image_url=..., action="check")
+AI 调用 nkit_ce_ocr/nkit_ce_search/nkit_ce_vision
         │
         ▼
-CacheTool.execute()
+FunctionTool.call(**kwargs)
+        │
+        ▼
+BaseTool.execute(**kwargs)
+        │
+        ├── 1. 缓存检查：CacheTool.check(image_url, task_type)
+        │       └── 命中 → 直接返回缓存结果
+        ├── 2. 图片预处理：PreprocessTool.execute(image_url, task_type)
+        ├── 3. 执行核心逻辑（OCR/搜图/视觉理解）
+        │       └── 外部服务（RapidOCR / trace.moe / SauceNAO / 华为云 / AstrBot LLM）
+        ├── 4. 缓存写入：CacheTool.store(image_url, task_type, result)
+        │       └── KVStoreTool → SQLiteStorageBackend → SQLite
+        └── 5. 上下文记录：ImageContextManager.add_knowledge(...)
+                └── 内部 SQLite 或 MemoryBridge → 天使之魂
+```
+
+### CatEye 缓存数据流
+
+CacheTool 内部持有 KVStoreTool 引用，缓存键格式为 `cat_eye:cache:{image_hash}_{task_type}`：
+
+```
+CacheTool.execute(action="check", image_url=..., task_type="ocr")
         │
         ├── 1. 下载图片，计算 MD5 + dHash
-        ├── 2. 生成 cache_key = "cat_eye:cache:{image_hash}"
+        ├── 2. 生成 cache_key = "cat_eye:cache:{image_hash}_ocr"
         └── 3. 调用 self._kv_tool.execute(action="get", key=cache_key)
                 │
                 ▼
         KVStoreTool → SQLiteStorageBackend → SQLite
 ```
 
+### CatEye Context 数据流
+
+ImageContextManager 管理图片认知上下文，存储键格式为 `cat_eye:ctx:{image_hash}`：
+
+```
+ImageContextManager.add_knowledge(image_url, source, content)
+        │
+        ├── bridge 存在 → MemoryBridge.add_knowledge(...)
+        │       └── AngelMemoryBridge → 天使之魂 MemoryRuntime.remember()
+        │               检索时使用 chained_recall()（自然语言 query + entities 精确匹配）
+        └── bridge 不存在 → 内部 SQLite
+                ├── _get_or_create_context(image_url, image_hash)
+                └── _save_context(ctx)
+                        └── KVStoreTool → SQLiteStorageBackend → SQLite
+```
+
 ### CatEye 场景预设数据流
 
 ```
-AI 调用 cateye_scene(action="get", scene_code="general_ocr")
+AI 调用 nkit_ce_scene(action="get", scene_code="extract_text")
         │
         ▼
 ScenePresetTool.execute()
@@ -172,18 +234,6 @@ ScenePresetTool.execute()
                 │
                 ▼
         KVStoreTool → SQLiteStorageBackend → SQLite
-```
-
-### 核心工具数据流
-
-```
-BaseTool.execute(**kwargs)
-        │
-        ├── 1. 下载图片（URL/本地路径/Base64）
-        └── 2. 执行核心逻辑（OCR/搜图/视觉理解）
-                │
-                ▼
-        外部服务（RapidOCR / trace.moe / SauceNAO / 华为云 / AstrBot LLM）
 ```
 
 ## 配置加载流程
@@ -197,14 +247,29 @@ AstrBot 启动
     │       ├── 读取 config.kv_store → ai_isolation / session_scope
     │       ├── KVStoreTool.set_config()
     │       │
-    │       ├── 构建 cateye_config（合并 cateye_general / cateye_ocr / cateye_search / cateye_vision 配置）
-    │       ├── 初始化 OCRTool（传入 config）
-    │       ├── 初始化 ImageSearchTool（传入 config + proxy_config）
-    │       ├── 初始化 VisionTool（传入 config + star_context）
-    │       ├── 初始化 PreprocessTool（传入 config）
-    │       ├── 初始化 CacheTool（传入 config + kv_tool）
-    │       └── 初始化 ScenePresetTool（传入 config + kv_tool）
-    └── 注册 10 个工具至 AstrBot
+    │       └── _init_cateye_tools(config)
+    │               │
+    │               ├── 构建 cateye_config（合并 cateye_general / cateye_ocr / cateye_search / cateye_vision 配置）
+    │               ├── 构建 proxy_config（合并 network_proxy 配置）
+    │               │
+    │               ├── 初始化 PreprocessTool（传入 config）
+    │               ├── 初始化 CacheTool（传入 config + kv_tool）
+    │               │
+    │               ├── 根据 context_backend 配置创建桥接实例
+    │               │   ├── "angel_memory" → _create_angel_memory_bridge()
+    │               │   │   └── 查找已加载的天使之魂插件 → AngelMemoryBridge
+    │               │   └── "internal" 或降级 → bridge=None
+    │               │
+    │               ├── 初始化 ImageContextManager（传入 kv_tool + bridge）
+    │               │
+    │               ├── 构建 CateyeServices(preprocess, cache, context)
+    │               │
+    │               ├── 初始化 OCRTool（传入 config + services）
+    │               ├── 初始化 ImageSearchTool（传入 config + proxy_config + services）
+    │               ├── 初始化 VisionTool（传入 config + star_context + services）
+    │               └── 初始化 ScenePresetTool（传入 config + kv_tool）
+    │
+    └── 注册 8 个工具至 AstrBot
 ```
 
 ## 扩展指南
@@ -216,12 +281,13 @@ NekoKit 采用子包模式组织工具集，每个工具集是一个独立的子
 1. 在 `tools/` 下创建新的子包目录（如 `tools/new_toolset/`）
 2. 在子包中创建 `__init__.py` 和工具模块，继承 `BaseTool` 实现业务逻辑
 3. 如有内部共享逻辑，创建 `_internal.py` 模块
-4. 在 `main.py` 中导入新工具，创建对应的 FunctionTool 子类
-5. 在 `Main.__init__` 中初始化新工具
-6. 在 `Main._register_tools()` 中添加注册
-7. 在 `_conf_schema.json` 中添加配置项
-8. 在 `docs/agent_guides/` 中添加 AI 使用指南
-9. 在 `docs/design/` 中添加设计文档
+4. 如需依赖注入，创建类似 `CateyeServices` 的数据类容器
+5. 在 `main.py` 中导入新工具，创建对应的 FunctionTool 子类
+6. 在 `Main.__init__` 中初始化新工具
+7. 在 `Main._register_tools()` 中添加注册
+8. 在 `_conf_schema.json` 中添加配置项
+9. 在 `docs/agent_guides/` 中添加 AI 使用指南
+10. 在 `docs/design/` 中添加设计文档
 
 ### 子包结构模板
 
@@ -229,6 +295,7 @@ NekoKit 采用子包模式组织工具集，每个工具集是一个独立的子
 tools/new_toolset/
 ├── __init__.py          # 导出工具类
 ├── _internal.py         # 内部共享工具（可选）
+├── services.py          # 依赖容器（可选）
 ├── tool_a.py            # 工具 A 实现
 └── tool_b.py            # 工具 B 实现
 ```
@@ -246,3 +313,10 @@ tools/new_toolset/
 - `api_key` / `scene`：认证信息和适用场景
 
 通用 `_call_custom` 方法根据上述配置自动处理请求构建和响应解析，无需为每个新供应商编写专用方法。
+
+### 新增 Context 后端
+
+1. 在 `memory_bridge.py` 中 `MemoryBridge` 协议已定义接口
+2. 创建新的桥接类实现 `MemoryBridge` 协议
+3. 在 `Main._init_cateye_tools` 中根据 `context_backend` 配置创建桥接实例
+4. 将桥接实例传入 `ImageContextManager`

@@ -8,14 +8,14 @@ NekoKit 插件提供 4 个独立的键值存储工具，用于持久化保存和
 
 | 工具名 | 功能描述 |
 |--------|----------|
-| `get_kv` | 根据键名获取已存储的值 |
-| `set_kv` | 存储或更新一个键值对 |
-| `delete_kv` | 根据键名删除已存储的值 |
-| `list_kv` | 列出当前作用域下的所有键名 |
+| `nkit_kv_get` | 根据键名获取已存储的值 |
+| `nkit_kv_set` | 存储或更新一个键值对 |
+| `nkit_kv_delete` | 根据键名删除已存储的值 |
+| `nkit_kv_list` | 列出当前作用域下的所有键名 |
 
 ---
 
-## get_kv
+## nkit_kv_get
 
 根据键名读取已存储的值。
 
@@ -42,13 +42,13 @@ NekoKit 插件提供 4 个独立的键值存储工具，用于持久化保存和
 ```json
 {
   "success": false,
-  "message": "喵~ 找不到键 'my_key'"
+  "message": "找不到键 'my_key'"
 }
 ```
 
 ---
 
-## set_kv
+## nkit_kv_set
 
 存储一个新的键值对，或更新已有的键值对。
 
@@ -79,7 +79,7 @@ NekoKit 插件提供 4 个独立的键值存储工具，用于持久化保存和
 
 ---
 
-## delete_kv
+## nkit_kv_delete
 
 根据键名删除已存储的数据。
 
@@ -97,7 +97,7 @@ NekoKit 插件提供 4 个独立的键值存储工具，用于持久化保存和
   "data": {
     "key": "my_key"
   },
-  "message": "已删除喵~ 🗑️"
+  "message": "已删除"
 }
 ```
 
@@ -106,13 +106,13 @@ NekoKit 插件提供 4 个独立的键值存储工具，用于持久化保存和
 ```json
 {
   "success": false,
-  "message": "找不到键 'my_key' 喵~ 😿"
+  "message": "找不到键 'my_key'"
 }
 ```
 
 ---
 
-## list_kv
+## nkit_kv_list
 
 列出当前作用域下的所有键名。
 
@@ -151,4 +151,4 @@ AI 隔离和会话隔离由**管理员在 WebUI 中配置**（位于 `KV 存储`
 
 ---
 
-> 📖 设计文档：[KV 存储工具集设计](../design/kv_store.md)
+> 设计文档：[KV 存储工具集设计](../design/kv_store.md)

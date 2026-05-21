@@ -44,10 +44,10 @@
 
 | 工具 | 职责 | 必填参数 |
 |------|------|----------|
-| `get_kv` | 读取单个键值 | key |
-| `set_kv` | 写入或更新键值对 | key, value |
-| `delete_kv` | 删除指定键值 | key |
-| `list_kv` | 列出当前作用域所有键 | 无 |
+| `nkit_kv_get` | 读取单个键值 | key |
+| `nkit_kv_set` | 写入或更新键值对 | key, value |
+| `nkit_kv_delete` | 删除指定键值 | key |
+| `nkit_kv_list` | 列出当前作用域所有键 | 无 |
 
 每个工具职责单一、参数明确，AI 可以直接根据意图选择对应工具，减少决策错误。
 
@@ -55,7 +55,7 @@
 
 ## 数据流简述
 
-1. AI 发起工具调用（如 `set_kv(key="name", value="Alice")`）
+1. AI 发起工具调用（如 `nkit_kv_set(key="name", value="Alice")`）
 2. FunctionTool 从运行时上下文提取 `ai_id` 和 `session_id`
 3. 将上下文注入 `KVStoreTool`，由其根据配置构建命名空间
 4. `KVStoreTool` 调用 `StorageBackend` 在对应命名空间下执行操作
@@ -77,7 +77,7 @@
 
 ### 新增工具操作
 
-在 `KVStoreTool.execute` 中添加新的 action 分支，然后在 `main.py` 中创建对应的 FunctionTool 子类并注册。例如添加 `search_kv` 工具，支持按键名关键词模糊搜索。
+在 `KVStoreTool.execute` 中添加新的 action 分支，然后在 `main.py` 中创建对应的 FunctionTool 子类并注册。例如添加 `nkit_kv_search` 工具，支持按键名关键词模糊搜索。
 
 ### 子包模式
 

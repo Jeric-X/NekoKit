@@ -20,7 +20,7 @@ class PreprocessTool(BaseTool):
             self._config = config
 
     def get_name(self) -> str:
-        return "cateye_preprocess"
+        return "nkit_ce_preprocess"
 
     def get_description(self) -> str:
         return (

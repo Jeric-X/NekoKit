@@ -17,15 +17,16 @@ from .tools.image_analyzer import (
     PreprocessTool,
     CacheTool,
     ScenePresetTool,
+    CateyeServices,
+    ImageContextManager,
 )
+from .tools.image_analyzer.angel_memory_bridge import AngelMemoryBridge
 from .core import ToolResult
 
 
 @dataclass
 class KVGetTool(FunctionTool[AstrAgentContext]):
-    """获取键值对"""
-
-    name: str = "get_kv"
+    name: str = "nkit_kv_get"
     description: str = "根据键名获取存储的值"
     parameters: dict = field(
         default_factory=lambda: {
@@ -66,9 +67,7 @@ class KVGetTool(FunctionTool[AstrAgentContext]):
 
 @dataclass
 class KVSetTool(FunctionTool[AstrAgentContext]):
-    """设置键值对"""
-
-    name: str = "set_kv"
+    name: str = "nkit_kv_set"
     description: str = "设置或更新键值对"
     parameters: dict = field(
         default_factory=lambda: {
@@ -113,9 +112,7 @@ class KVSetTool(FunctionTool[AstrAgentContext]):
 
 @dataclass
 class KVDeleteTool(FunctionTool[AstrAgentContext]):
-    """删除键值对"""
-
-    name: str = "delete_kv"
+    name: str = "nkit_kv_delete"
     description: str = "根据键名删除存储的值"
     parameters: dict = field(
         default_factory=lambda: {
@@ -156,9 +153,7 @@ class KVDeleteTool(FunctionTool[AstrAgentContext]):
 
 @dataclass
 class KVListTool(FunctionTool[AstrAgentContext]):
-    """列出所有键"""
-
-    name: str = "list_kv"
+    name: str = "nkit_kv_list"
     description: str = "列出当前作用域下的所有键"
     parameters: dict = field(
         default_factory=lambda: {
@@ -193,9 +188,7 @@ class KVListTool(FunctionTool[AstrAgentContext]):
 
 @dataclass
 class CateyeOCRTool(FunctionTool[AstrAgentContext]):
-    """OCR 文字识别"""
-
-    name: str = "cateye_ocr"
+    name: str = "nkit_ce_ocr"
     description: str = (
         "使用 RapidOCR 引擎提取图片中的文字，返回纯文本。默认支持中文和英文。"
     )
@@ -236,9 +229,7 @@ class CateyeOCRTool(FunctionTool[AstrAgentContext]):
 
 @dataclass
 class CateyeSearchTool(FunctionTool[AstrAgentContext]):
-    """以图搜图"""
-
-    name: str = "cateye_search"
+    name: str = "nkit_ce_search"
     description: str = (
         "以图搜图工具，支持华为云、trace.moe、SauceNAO 等多个供应商，根据场景自动选择。"
     )
@@ -292,9 +283,7 @@ class CateyeSearchTool(FunctionTool[AstrAgentContext]):
 
 @dataclass
 class CateyeVisionTool(FunctionTool[AstrAgentContext]):
-    """大模型视觉理解"""
-
-    name: str = "cateye_vision"
+    name: str = "nkit_ce_vision"
     description: str = (
         "调用多模态大模型对图片进行理解、描述或推理，支持日常模式和专业模式。"
     )
@@ -346,115 +335,8 @@ class CateyeVisionTool(FunctionTool[AstrAgentContext]):
 
 
 @dataclass
-class CateyePreprocessTool(FunctionTool[AstrAgentContext]):
-    """图片预处理"""
-
-    name: str = "cateye_preprocess"
-    description: str = "根据任务类型自动调整图片尺寸和格式，优化速度和 token 消耗。"
-    parameters: dict = field(
-        default_factory=lambda: {
-            "type": "object",
-            "properties": {
-                "image_url": {
-                    "type": "string",
-                    "description": "图片 URL 或本地文件路径",
-                },
-                "task_type": {
-                    "type": "string",
-                    "description": "任务类型：ocr（文字识别）、search（搜图）或 vision（大模型）",
-                    "enum": ["ocr", "search", "vision"],
-                },
-            },
-            "required": ["image_url", "task_type"],
-        }
-    )
-
-    _preprocess_tool: PreprocessTool = None
-
-    @classmethod
-    def create_with_tool(
-        cls, preprocess_tool: PreprocessTool
-    ) -> "CateyePreprocessTool":
-        tool = cls()
-        tool._preprocess_tool = preprocess_tool
-        return tool
-
-    async def call(self, context: ContextWrapper[AstrAgentContext], **kwargs) -> str:
-        if not self._preprocess_tool:
-            return "PreprocessTool 未初始化"
-        try:
-            result: ToolResult = await self._preprocess_tool.execute(**kwargs)
-            if result.success:
-                return json.dumps(result.to_dict(), ensure_ascii=False)
-            else:
-                return result.message
-        except Exception as e:
-            logger.error(f"[nekokit.cateye] Preprocess 执行失败: {e}")
-            return f"Preprocess 执行失败: {str(e)}"
-
-
-@dataclass
-class CateyeCacheTool(FunctionTool[AstrAgentContext]):
-    """图片缓存"""
-
-    name: str = "cateye_cache"
-    description: str = (
-        "检测相似图片是否已被处理过，避免重复调用 API。使用 MD5 + dHash 相似度检测。"
-    )
-    parameters: dict = field(
-        default_factory=lambda: {
-            "type": "object",
-            "properties": {
-                "image_url": {
-                    "type": "string",
-                    "description": "图片 URL 或本地文件路径",
-                },
-                "task_type": {
-                    "type": "string",
-                    "description": "任务类型：ocr（文字识别）、search（搜图）或 vision（大模型）",
-                    "enum": ["ocr", "search", "vision"],
-                },
-                "action": {
-                    "type": "string",
-                    "description": "操作：check（查询缓存）或 store（保存结果）",
-                    "enum": ["check", "store"],
-                },
-                "result": {
-                    "type": "string",
-                    "description": "要存储的结果数据（store 操作时必填）",
-                },
-            },
-            "required": ["image_url", "task_type", "action"],
-        }
-    )
-
-    _cache_tool: CacheTool = None
-
-    @classmethod
-    def create_with_tool(cls, cache_tool: CacheTool) -> "CateyeCacheTool":
-        tool = cls()
-        tool._cache_tool = cache_tool
-        return tool
-
-    async def call(self, context: ContextWrapper[AstrAgentContext], **kwargs) -> str:
-        if not self._cache_tool:
-            return "CacheTool 未初始化"
-        try:
-            result: ToolResult = await self._cache_tool.execute(**kwargs)
-            if result.success:
-                return json.dumps(result.to_dict(), ensure_ascii=False)
-            else:
-                return result.message
-        except Exception as e:
-            logger.error(f"[nekokit.cateye] Cache 执行失败: {e}")
-            return f"Cache 执行失败: {str(e)}"
-
-
-@dataclass
 class CateyeSceneTool(FunctionTool[AstrAgentContext]):
-    """场景预设"""
-
-    name: str = "cateye_scene"
+    name: str = "nkit_ce_scene"
     description: str = (
         "场景预设工具。根据场景编码返回工具组合策略，"
         "指导按步骤调用 cateye 工具集。"
@@ -515,6 +397,14 @@ class CateyeSceneTool(FunctionTool[AstrAgentContext]):
 class Main(star.Star):
     """NekoKit 插件主类"""
 
+    NEKOKIT_MANAGED_DATA = {
+        "cateye_context": {
+            "description": "CatEye 图片认知上下文",
+            "bridge_class": "AngelMemoryBridge",
+            "module": "nekokit.tools.image_analyzer.angel_memory_bridge",
+        }
+    }
+
     def __init__(self, context: star.Context, config: AstrBotConfig = None) -> None:
         super().__init__(context)
         self.context = context
@@ -534,6 +424,8 @@ class Main(star.Star):
             self._kv_tool.set_config(kvstore_config)
             logger.info(f"[NekoKit] 已加载配置: {kvstore_config}")
 
+        self.image_context_manager = None
+
         self._init_cateye_tools(config)
 
         self._register_tools()
@@ -544,12 +436,35 @@ class Main(star.Star):
         cateye_config = self._build_cateye_config(config)
         proxy_config = self._build_proxy_config(config)
 
+        self._preprocess_tool = PreprocessTool()
+        self._preprocess_tool.initialize(self.data_dir, cateye_config)
+
+        self._cache_tool = CacheTool()
+        self._cache_tool.initialize(self.data_dir, cateye_config, kv_tool=self._kv_tool)
+
+        context_backend = cateye_config.get("context_backend", "internal")
+        bridge = None
+        if context_backend == "angel_memory":
+            bridge = self._create_angel_memory_bridge()
+            if bridge is None:
+                logger.warning("[nekokit] 天使之魂插件未加载，降级为内部 context")
+
+        self.image_context_manager = ImageContextManager(
+            self._kv_tool, self.data_dir, bridge=bridge
+        )
+
+        services = CateyeServices(
+            preprocess=self._preprocess_tool,
+            cache=self._cache_tool,
+            context=self.image_context_manager,
+        )
+
         self._ocr_tool = OCRTool()
-        self._ocr_tool.initialize(self.data_dir, cateye_config)
+        self._ocr_tool.initialize(self.data_dir, cateye_config, services=services)
 
         self._search_tool = ImageSearchTool()
         self._search_tool.initialize(
-            self.data_dir, cateye_config, proxy_config=proxy_config
+            self.data_dir, cateye_config, proxy_config=proxy_config, services=services
         )
 
         self._vision_tool = VisionTool()
@@ -557,18 +472,26 @@ class Main(star.Star):
             self.data_dir,
             cateye_config,
             star_context=self.context,
-        )
-
-        self._preprocess_tool = PreprocessTool()
-        self._preprocess_tool.initialize(self.data_dir, cateye_config)
-
-        self._cache_tool = CacheTool()
-        self._cache_tool.initialize(
-            self.data_dir, cateye_config, kv_tool=self._kv_tool
+            services=services,
         )
 
         self._scene_tool = ScenePresetTool()
         self._scene_tool.initialize(self.data_dir, cateye_config, kv_tool=self._kv_tool)
+
+    def _create_angel_memory_bridge(self):
+        try:
+            from astrbot_plugin_angel_memory.core.memory_runtime import MemoryRuntime
+
+            for plugin in self.context.get_all_stars():
+                if hasattr(plugin, "memory_runtime") and isinstance(
+                    plugin.memory_runtime, MemoryRuntime
+                ):
+                    return AngelMemoryBridge(plugin.memory_runtime, plugin.context)
+        except ImportError:
+            logger.warning("[nekokit] 天使之魂记忆插件未安装")
+        except Exception as e:
+            logger.warning(f"[nekokit] 创建天使之魂桥接失败: {e}")
+        return None
 
     def _build_cateye_config(self, config: AstrBotConfig = None) -> dict:
         cateye_config = {}
@@ -581,6 +504,7 @@ class Main(star.Star):
             "custom_prompt_enabled", False
         )
         cateye_config["custom_prompt"] = general.get("custom_prompt", "")
+        cateye_config["context_backend"] = general.get("context_backend", "internal")
 
         ocr = config.get("cateye_ocr", {})
         cateye_config["ocr_text_score"] = ocr.get("text_score", 0.5)
@@ -633,7 +557,6 @@ class Main(star.Star):
         return proxy_config
 
     def _register_tools(self):
-        """注册工具"""
         tools = [
             KVGetTool.create_with_tool(self._kv_tool),
             KVSetTool.create_with_tool(self._kv_tool),
@@ -642,13 +565,10 @@ class Main(star.Star):
             CateyeOCRTool.create_with_tool(self._ocr_tool),
             CateyeSearchTool.create_with_tool(self._search_tool),
             CateyeVisionTool.create_with_tool(self._vision_tool),
-            CateyePreprocessTool.create_with_tool(self._preprocess_tool),
-            CateyeCacheTool.create_with_tool(self._cache_tool),
             CateyeSceneTool.create_with_tool(self._scene_tool),
         ]
         self.context.add_llm_tools(*tools)
 
     async def terminate(self):
-        """插件卸载时调用，清理资源"""
         if hasattr(self, "_kv_tool") and self._kv_tool:
             logger.info("[NekoKit] 插件卸载，清理资源")

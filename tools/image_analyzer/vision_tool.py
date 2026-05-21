@@ -1,10 +1,11 @@
+import json
 import os
 from typing import Any, Dict, Optional
 
 from astrbot.api import logger
 
 from ...core import BaseTool, ToolResult
-from ._internal import download_image, image_to_base64_url
+from ._internal import download_image, image_to_base64_url, preprocess_image
 
 
 class VisionTool(BaseTool):
@@ -12,12 +13,14 @@ class VisionTool(BaseTool):
         self._data_dir: str = ""
         self._config: Dict[str, Any] = {}
         self._star_context = None
+        self._services = None
 
     def initialize(
         self,
         data_dir: str,
         config: Dict[str, Any] = None,
         star_context=None,
+        services=None,
         **kwargs,
     ) -> None:
         self._data_dir = data_dir
@@ -25,14 +28,16 @@ class VisionTool(BaseTool):
             self._config = config
         if star_context:
             self._star_context = star_context
+        if services:
+            self._services = services
 
     def get_name(self) -> str:
-        return "cateye_vision"
+        return "nkit_ce_vision"
 
     def get_description(self) -> str:
         return (
             "视觉理解工具。调用多模态大模型对图片进行理解、描述或推理。"
-            "支持日常模式和专业模式。可注入场景上下文以增强分析效果。"
+            "支持日常模式和专业模式。"
         )
 
     def get_parameters(self) -> Dict[str, Any]:
@@ -55,30 +60,6 @@ class VisionTool(BaseTool):
                     ),
                     "enum": ["daily", "professional"],
                 },
-                "scene_name": {
-                    "type": "string",
-                    "description": "场景预设名称（可选，用于上下文注入）",
-                },
-                "scene_description": {
-                    "type": "string",
-                    "description": "场景描述（可选，配合 scene_name 使用）",
-                },
-                "tool_chain_dag": {
-                    "type": "string",
-                    "description": "工具链路 DAG 描述，如 cateye_preprocess(ocr) → cateye_ocr（可选）",
-                },
-                "user_intent_keywords": {
-                    "type": "string",
-                    "description": "用户意图关键词，逗号分隔（可选，用于上下文注入）",
-                },
-                "distilled_context": {
-                    "type": "string",
-                    "description": "从会话上下文蒸馏的关键信息摘要（可选）",
-                },
-                "cached_results": {
-                    "type": "string",
-                    "description": "前序工具的缓存结果 JSON 字符串（可选，用于结果整合）",
-                },
             },
             "required": ["image_url", "prompt"],
         }
@@ -97,8 +78,25 @@ class VisionTool(BaseTool):
             return ToolResult(success=False, message="AstrBot 上下文不可用")
 
         try:
+            context_injection = ""
+            if self._services and self._services.cache:
+                cache_result = await self._services.cache.execute(
+                    action="check", image_url=image_url, task_type="vision"
+                )
+                if cache_result.success and cache_result.data.get("hit"):
+                    if self._services and self._services.context:
+                        context_injection = (
+                            await self._services.context.build_vision_prompt_context(
+                                image_url, prompt
+                            )
+                        )
+
             img_dir = os.path.join(self._data_dir, "cateye", "images")
             image_path = await download_image(image_url, img_dir)
+
+            if self._services and self._services.preprocess:
+                output_dir = os.path.join(self._data_dir, "cateye", "preprocessed")
+                image_path = preprocess_image(image_path, "vision", output_dir)
 
             provider_id = self._resolve_provider(mode)
             if not provider_id:
@@ -107,13 +105,11 @@ class VisionTool(BaseTool):
                     message=f"插件设置中未配置 {mode} 模型",
                 )
 
-            system_prompt = self._build_system_prompt(mode, **kwargs)
+            kwargs.pop("mode", None)
+            system_prompt = self._build_system_prompt(mode, context_injection)
             b64_url = image_to_base64_url(image_path)
 
             user_prompt = prompt
-            cached_results = kwargs.get("cached_results", "")
-            if cached_results:
-                user_prompt = f"{prompt}\n\n前序工具结果：\n{cached_results}"
 
             llm_resp = await self._star_context.llm_generate(
                 chat_provider_id=provider_id,
@@ -123,6 +119,22 @@ class VisionTool(BaseTool):
             )
 
             analysis = llm_resp.completion_text if llm_resp else ""
+
+            if self._services and self._services.cache:
+                await self._services.cache.execute(
+                    action="store",
+                    image_url=image_url,
+                    task_type="vision",
+                    result=json.dumps({"vision_analysis": analysis[:500]}),
+                )
+
+            if self._services and self._services.context:
+                await self._services.context.add_knowledge(
+                    image_url,
+                    source="nkit_ce_vision",
+                    content=analysis[:200] if analysis else "(无分析结果)",
+                    mode=mode,
+                )
 
             logger.info(f"[nekokit.cateye] 视觉分析完成（{mode} 模式）")
             return ToolResult(
@@ -141,7 +153,7 @@ class VisionTool(BaseTool):
             return vision_config.get("professional_model", "")
         return vision_config.get("daily_model", "")
 
-    def _build_system_prompt(self, mode: str, **kwargs) -> str:
+    def _build_system_prompt(self, mode: str, context_injection: str = "") -> str:
         if mode == "professional":
             base = (
                 "你是一个专业的图片分析助手。"
@@ -155,33 +167,7 @@ class VisionTool(BaseTool):
                 "简洁但信息丰富。"
             )
 
-        scene_name = kwargs.get("scene_name", "")
-        scene_description = kwargs.get("scene_description", "")
-        tool_chain_dag = kwargs.get("tool_chain_dag", "")
-        user_intent_keywords = kwargs.get("user_intent_keywords", "")
-        distilled_context = kwargs.get("distilled_context", "")
+        if context_injection:
+            return base + "\n\n" + context_injection
 
-        has_context = any(
-            [scene_name, tool_chain_dag, user_intent_keywords, distilled_context]
-        )
-        if not has_context:
-            return base
-
-        parts = ["你正在使用 CatEye 视觉分析工具。以下是当前任务的背景信息："]
-
-        if scene_name:
-            desc = f" — {scene_description}" if scene_description else ""
-            parts.append(f"- 场景预设：{scene_name}{desc}")
-        if tool_chain_dag:
-            parts.append(f"- 工具链路：{tool_chain_dag}")
-        if user_intent_keywords:
-            parts.append(f"- 任务需求：{user_intent_keywords}")
-        if distilled_context:
-            parts.append(f"- 上下文摘要：{distilled_context}")
-
-        parts.append(
-            "请基于以上背景，结合图片内容进行分析。"
-            "如有从缓存或前序工具获取的结果，请优先参考并整合。"
-        )
-
-        return base + "\n\n" + "\n".join(parts)
+        return base

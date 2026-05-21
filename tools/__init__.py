@@ -6,6 +6,8 @@ from .image_analyzer import (
     PreprocessTool,
     CacheTool,
     ScenePresetTool,
+    CateyeServices,
+    ImageContextManager,
 )
 
 __all__ = [
@@ -18,4 +20,6 @@ __all__ = [
     "PreprocessTool",
     "CacheTool",
     "ScenePresetTool",
+    "CateyeServices",
+    "ImageContextManager",
 ]

@@ -6,12 +6,11 @@ from astrbot.api import logger
 from ...core import BaseTool, ToolResult
 from ...tools.kv_store.kv_store_tool import KVStoreTool
 
-# 优化后的场景预设，适配二次元QQ群聊天场景
 BUILTIN_PRESETS = {
     "extract_text": {
         "name": "文字提取",
         "description": "从图片中提取文字内容，适合截图、表情包配文、公告图片等场景",
-        "tool_chain": ["cateye_preprocess", "cateye_ocr"],
+        "tool_chain": ["nkit_ce_ocr"],
         "model_preference": "daily",
         "trigger_keywords": [
             "提取文字",
@@ -33,12 +32,7 @@ BUILTIN_PRESETS = {
     "identify_character": {
         "name": "角色识别",
         "description": "识别图片中的动漫角色或游戏角色，结合搜图和视觉理解给出详细信息",
-        "tool_chain": [
-            "cateye_preprocess",
-            "cateye_search",
-            "cateye_preprocess",
-            "cateye_vision",
-        ],
+        "tool_chain": ["nkit_ce_search", "nkit_ce_vision"],
         "model_preference": "daily",
         "trigger_keywords": [
             "这是谁",
@@ -63,7 +57,7 @@ BUILTIN_PRESETS = {
     "find_anime_source": {
         "name": "番剧溯源",
         "description": "查找动漫截图的出处，识别番剧名称、集数、时间点，支持trace.moe识别",
-        "tool_chain": ["cateye_preprocess", "cateye_search"],
+        "tool_chain": ["nkit_ce_search"],
         "model_preference": "daily",
         "trigger_keywords": [
             "这是什么番",
@@ -88,7 +82,7 @@ BUILTIN_PRESETS = {
     "understand_meme": {
         "name": "表情包解读",
         "description": "解读二次元表情包的含义、梗的来源和笑点，分析表情配文的语境",
-        "tool_chain": ["cateye_preprocess", "cateye_vision"],
+        "tool_chain": ["nkit_ce_vision"],
         "model_preference": "daily",
         "trigger_keywords": [
             "什么梗",
@@ -116,7 +110,7 @@ BUILTIN_PRESETS = {
             "分析图片内容。日常场景（游戏截图、活动图、地图、配装等）使用 daily 模式；"
             "涉及数据、图表、文字、复杂逻辑时使用 professional 模式"
         ),
-        "tool_chain": ["cateye_preprocess", "cateye_vision"],
+        "tool_chain": ["nkit_ce_vision"],
         "model_preference": "",
         "trigger_keywords": [
             "分析一下",
@@ -142,8 +136,6 @@ BUILTIN_PRESETS = {
 
 
 class ScenePresetTool(BaseTool):
-    """场景预设工具"""
-
     def __init__(self):
         self._config: Dict[str, Any] = {}
         self._kv_tool: Optional[KVStoreTool] = None
@@ -155,19 +147,18 @@ class ScenePresetTool(BaseTool):
         kv_tool: KVStoreTool = None,
         **kwargs,
     ) -> None:
-        """初始化工具"""
         if config:
             self._config = config
         if kv_tool:
             self._kv_tool = kv_tool
 
     def get_name(self) -> str:
-        return "cateye_scene"
+        return "nkit_ce_scene"
 
     def get_description(self) -> str:
         return (
             "场景预设工具。根据场景编码返回工具组合策略，"
-            "专为二次元QQ群聊天场景优化，支持角色识别、番剧溯源、表情包解读等。"
+            "指导按步骤调用 cateye 工具集。"
             "支持查看预设列表、获取具体方案、自定义修改方案。"
         )
 
@@ -205,7 +196,6 @@ class ScenePresetTool(BaseTool):
         }
 
     async def execute(self, **kwargs) -> ToolResult:
-        """执行场景预设操作"""
         if not self._kv_tool:
             return ToolResult(success=False, message="KVStoreTool 未初始化")
 
@@ -232,7 +222,6 @@ class ScenePresetTool(BaseTool):
             return ToolResult(success=False, message=f"未知操作: {action}")
 
     async def _list_presets(self) -> ToolResult:
-        """列出所有场景预设"""
         presets = {}
         for code, preset in BUILTIN_PRESETS.items():
             presets[code] = {
@@ -293,7 +282,6 @@ class ScenePresetTool(BaseTool):
         )
 
     async def _get_preset(self, scene_code: str) -> ToolResult:
-        """获取指定场景预设"""
         if scene_code in BUILTIN_PRESETS:
             preset = BUILTIN_PRESETS[scene_code]
             kv_key = f"cat_eye:scene:{scene_code}"
@@ -337,7 +325,6 @@ class ScenePresetTool(BaseTool):
         )
 
     async def _update_preset(self, scene_code: str, preset_json: str) -> ToolResult:
-        """更新场景预设"""
         try:
             preset_data = json.loads(preset_json)
         except json.JSONDecodeError as e:

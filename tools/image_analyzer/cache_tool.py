@@ -30,13 +30,13 @@ class CacheTool(BaseTool):
             self._kv_tool = kv_tool
 
     def get_name(self) -> str:
-        return "cateye_cache"
+        return "nkit_ce_cache"
 
     def get_description(self) -> str:
         return (
             "图片缓存管理工具。通过内部 KV 存储管理图片分析缓存，"
             "支持查询缓存、存储结果、更新条目。"
-            "缓存键格式为 cat_eye:cache:{image_hash}，有效期 48 小时。"
+            "缓存键格式为 cat_eye:cache:{image_hash}_{tool_name}，有效期 48 小时。"
         )
 
     def get_parameters(self) -> Dict[str, Any]:
@@ -57,33 +57,14 @@ class CacheTool(BaseTool):
                     ),
                     "enum": ["check", "store", "update"],
                 },
-                "tool_chain_dag": {
+                "task_type": {
                     "type": "string",
-                    "description": "工具链路 DAG 描述（store/update 时必填）",
-                },
-                "tool_chain_nodes": {
-                    "type": "string",
-                    "description": "工具节点列表 JSON 字符串（store/update 时必填）",
+                    "description": "任务类型：ocr、search 或 vision",
+                    "enum": ["ocr", "search", "vision"],
                 },
                 "result": {
                     "type": "string",
-                    "description": "各工具返回结果 JSON 字符串（store/update 时必填）",
-                },
-                "context_scene": {
-                    "type": "string",
-                    "description": "场景预设名称（store 时可选）",
-                },
-                "context_scene_description": {
-                    "type": "string",
-                    "description": "场景描述（store 时可选）",
-                },
-                "context_user_intent": {
-                    "type": "string",
-                    "description": "用户意图关键词，逗号分隔（store 时可选）",
-                },
-                "context_distilled": {
-                    "type": "string",
-                    "description": "蒸馏的上下文摘要（store 时可选）",
+                    "description": "结果数据 JSON 字符串（store/update 时必填）",
                 },
                 "evaluation": {
                     "type": "integer",
@@ -99,6 +80,7 @@ class CacheTool(BaseTool):
 
         image_url = kwargs.get("image_url", "")
         action = kwargs.get("action", "")
+        task_type = kwargs.get("task_type", "vision")
 
         if not image_url:
             return ToolResult(success=False, message="必须提供 image_url")
@@ -110,7 +92,7 @@ class CacheTool(BaseTool):
             image_path = await download_image(image_url, img_dir)
             md5_val, dhash_val = compute_image_hashes(image_path)
             image_hash = f"{md5_val}_{dhash_val}" if dhash_val else md5_val
-            cache_key = f"cat_eye:cache:{image_hash}"
+            cache_key = f"cat_eye:cache:{image_hash}_{task_type}"
 
             if action == "check":
                 return await self._check_cache(cache_key)
@@ -159,14 +141,7 @@ class CacheTool(BaseTool):
         now = datetime.now(timezone.utc)
         expires_at = now + timedelta(hours=48)
 
-        tool_chain_dag = kwargs.get("tool_chain_dag", "")
-        tool_chain_nodes_str = kwargs.get("tool_chain_nodes", "[]")
         result_str = kwargs.get("result", "{}")
-
-        try:
-            tool_chain_nodes = json.loads(tool_chain_nodes_str)
-        except json.JSONDecodeError:
-            tool_chain_nodes = []
 
         try:
             result_data = json.loads(result_str)
@@ -174,21 +149,7 @@ class CacheTool(BaseTool):
             result_data = {}
 
         entry = {
-            "tool_chain": {
-                "dag": tool_chain_dag,
-                "nodes": tool_chain_nodes,
-            },
             "result": result_data,
-            "context": {
-                "scene": kwargs.get("context_scene", ""),
-                "scene_description": kwargs.get("context_scene_description", ""),
-                "user_intent_keywords": [
-                    k.strip()
-                    for k in kwargs.get("context_user_intent", "").split(",")
-                    if k.strip()
-                ],
-                "distilled_context": kwargs.get("context_distilled", ""),
-            },
             "evaluation": 0,
             "created_at": now.isoformat(),
             "expires_at": expires_at.isoformat(),
@@ -215,17 +176,6 @@ class CacheTool(BaseTool):
 
         entry = check_result.data.get("entry", {})
 
-        tool_chain_dag = kwargs.get("tool_chain_dag", "")
-        if tool_chain_dag:
-            entry["tool_chain"]["dag"] = tool_chain_dag
-
-        tool_chain_nodes_str = kwargs.get("tool_chain_nodes", "")
-        if tool_chain_nodes_str:
-            try:
-                entry["tool_chain"]["nodes"] = json.loads(tool_chain_nodes_str)
-            except json.JSONDecodeError:
-                pass
-
         result_str = kwargs.get("result", "")
         if result_str:
             try:
@@ -233,21 +183,6 @@ class CacheTool(BaseTool):
                 entry["result"].update(new_result)
             except json.JSONDecodeError:
                 pass
-
-        context_scene = kwargs.get("context_scene", "")
-        if context_scene:
-            entry["context"]["scene"] = context_scene
-        context_scene_description = kwargs.get("context_scene_description", "")
-        if context_scene_description:
-            entry["context"]["scene_description"] = context_scene_description
-        context_user_intent = kwargs.get("context_user_intent", "")
-        if context_user_intent:
-            entry["context"]["user_intent_keywords"] = [
-                k.strip() for k in context_user_intent.split(",") if k.strip()
-            ]
-        context_distilled = kwargs.get("context_distilled", "")
-        if context_distilled:
-            entry["context"]["distilled_context"] = context_distilled
 
         if "evaluation" in kwargs:
             evaluation = kwargs.get("evaluation", 0)

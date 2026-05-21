@@ -1,4 +1,6 @@
 from .cache_tool import CacheTool
+from .cateye_services import CateyeServices
+from .image_context_manager import ImageContextManager
 from .image_search_tool import ImageSearchTool
 from .ocr_tool import OCRTool
 from .preprocess_tool import PreprocessTool
@@ -12,4 +14,6 @@ __all__ = [
     "PreprocessTool",
     "CacheTool",
     "ScenePresetTool",
+    "CateyeServices",
+    "ImageContextManager",
 ]

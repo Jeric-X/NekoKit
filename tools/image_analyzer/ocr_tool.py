@@ -1,11 +1,12 @@
 import asyncio
+import json
 import os
 from typing import Any, Dict
 
 from astrbot.api import logger
 
 from ...core import BaseTool, ToolResult
-from ._internal import download_image
+from ._internal import download_image, preprocess_image
 
 
 class OCRTool(BaseTool):
@@ -13,16 +14,20 @@ class OCRTool(BaseTool):
         self._data_dir: str = ""
         self._config: Dict[str, Any] = {}
         self._engine = None
+        self._services = None
 
     def initialize(
         self,
         data_dir: str,
         config: Dict[str, Any] = None,
+        services=None,
         **kwargs,
     ) -> None:
         self._data_dir = data_dir
         if config:
             self._config = config
+        if services:
+            self._services = services
 
     def _get_engine(self):
         if self._engine is None:
@@ -39,7 +44,7 @@ class OCRTool(BaseTool):
         return self._engine
 
     def get_name(self) -> str:
-        return "cateye_ocr"
+        return "nkit_ce_ocr"
 
     def get_description(self) -> str:
         return "OCR 文字识别工具。使用 RapidOCR 引擎提取图片中的文字，返回纯文本。"
@@ -63,8 +68,31 @@ class OCRTool(BaseTool):
             return ToolResult(success=False, message="必须提供 image_url")
 
         try:
+            if self._services and self._services.cache:
+                cache_result = await self._services.cache.execute(
+                    action="check", image_url=image_url, task_type="ocr"
+                )
+                if cache_result.success and cache_result.data.get("hit"):
+                    entry = cache_result.data.get("entry", {})
+                    cached_result = entry.get("result", {}).get("ocr_text")
+                    if cached_result is not None:
+                        logger.info("[nekokit.cateye] OCR 缓存命中")
+                        return ToolResult(
+                            success=True,
+                            message="OCR 完成（缓存）",
+                            data={
+                                "text": cached_result,
+                                "block_count": 0,
+                                "cached": True,
+                            },
+                        )
+
             img_dir = os.path.join(self._data_dir, "cateye", "images")
             image_path = await download_image(image_url, img_dir)
+
+            if self._services and self._services.preprocess:
+                output_dir = os.path.join(self._data_dir, "cateye", "preprocessed")
+                image_path = preprocess_image(image_path, "ocr", output_dir)
 
             engine = self._get_engine()
             loop = asyncio.get_event_loop()
@@ -76,6 +104,21 @@ class OCRTool(BaseTool):
             else:
                 text_parts = [item[1] for item in result]
                 full_text = "\n".join(text_parts)
+
+            if self._services and self._services.cache:
+                await self._services.cache.execute(
+                    action="store",
+                    image_url=image_url,
+                    task_type="ocr",
+                    result=json.dumps({"ocr_text": full_text}),
+                )
+
+            if self._services and self._services.context:
+                await self._services.context.add_knowledge(
+                    image_url,
+                    source="nkit_ce_ocr",
+                    content=full_text[:200] if full_text else "(无文字)",
+                )
 
             logger.info(f"[nekokit.cateye] OCR 完成，提取了 {len(text_parts)} 个文本块")
             return ToolResult(

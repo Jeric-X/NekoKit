@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.0.6.2 (2026-05-23)
+
+### 变更
+- 重写面向智能体的文档（cateye.md / kv_store.md）：删除冗余参数表和返回示例，以场景驱动替代工具驱动，强调 context 机制和预设优先
+- cateye.md 新增 Context 机制章节：自动行为 + 4 种主动利用方式 + 生命周期说明
+- cateye.md 完整暴露 nkit_ce_cache 工具，支持 agent 主动查询缓存和质量打分
+- kv_store.md 新增典型用法章节：结构化数据表、配置存储、前缀组织
+- 缓存工具重新暴露给 agent（nkit_ce_cache），核心工具内部仍自动调用缓存
+
+### 修复
+- 移除 ImageCache 残留引用，修复 CacheTool/ScenePresetTool 初始化缺少 kv_tool 参数
+
+---
+
 ## 0.0.6 (2026-05-21)
 
 ### 新增

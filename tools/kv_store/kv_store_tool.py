@@ -1,4 +1,3 @@
-import json
 from typing import Any, Dict, Optional
 
 from astrbot.api import logger
@@ -47,11 +46,22 @@ class KVStoreTool(BaseTool):
         self._namespace_strategy: NamespaceStrategy = DefaultNamespaceStrategy()
         self._context: Optional[ContextWrapper[AstrAgentContext]] = None
         self._config = {"ai_isolation": True, "session_scope": False}
+        self._store_name = "kvstore"
 
-    def initialize(self, data_dir: str) -> None:
-        """初始化工具，统一使用 SQLite"""
-        self._storage = create_storage_backend(data_dir)
-        logger.info(f"[KVStoreTool] 已初始化，数据目录: {data_dir}")
+    def initialize(
+        self,
+        data_dir: str,
+        store_name: str = "kvstore",
+        use_sqlite: bool = False,
+    ) -> None:
+        """初始化工具，默认使用 JSON 文件后端"""
+        self._store_name = store_name
+        self._storage = create_storage_backend(
+            data_dir, use_sqlite=use_sqlite, store_name=store_name
+        )
+        logger.info(
+            f"[KVStoreTool] 已初始化，数据目录: {data_dir}, 存储: {store_name}"
+        )
 
     def set_config(self, config: Dict[str, Any]) -> None:
         """设置配置"""
@@ -82,7 +92,7 @@ class KVStoreTool(BaseTool):
                 },
                 "value": {
                     "type": "string",
-                    "description": "值（set 操作需要），可以是任意 JSON 兼容的数据",
+                    "description": "值（set 操作需要），任意字符串内容",
                 },
             },
             "required": ["action"],
@@ -191,15 +201,7 @@ class KVStoreTool(BaseTool):
         if value is None:
             return ToolResult(success=False, message="设置数据需要提供值")
 
-        try:
-            if isinstance(value, str):
-                parsed_value = json.loads(value)
-            else:
-                parsed_value = value
-        except json.JSONDecodeError:
-            parsed_value = value
-
-        self._storage.set(key, parsed_value, namespace)
+        self._storage.set(key, str(value), namespace)
 
         scope_desc = self._namespace_strategy.describe(
             ai_isolation, session_scope, ai_id, session_id

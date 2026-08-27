@@ -1,6 +1,7 @@
 import json
+import math
 import re
-from typing import Callable, Optional
+from typing import Callable, Optional, Union
 
 from astrbot.api.event import AstrMessageEvent
 from astrbot.core.agent.run_context import ContextWrapper
@@ -12,6 +13,8 @@ from .tools import FileStoreTool, KVStoreTool
 
 class NekoKitCommandService:
     """Command-facing adapter for NekoKit tools."""
+
+    LIST_CHUNK_SIZE = 50
 
     HELP_TEXT = """NekoKit 人工命令
 /nkit help
@@ -63,8 +66,20 @@ file save 示例：
             )
         return self._format_result(result)
 
-    async def run_kv_list(self, event: AstrMessageEvent, prefix: str = "") -> str:
-        return await self.run_kv(event, "list", prefix=prefix)
+    async def run_kv_list(
+        self, event: AstrMessageEvent, prefix: str = ""
+    ) -> Union[str, list]:
+        self._kv_tool.set_context(self._make_agent_context(event))
+        result = await self._kv_tool.execute(action="list", prefix=prefix)
+        return self._format_list_output(result, "keys")
+
+    async def run_file_list(
+        self, event: AstrMessageEvent, prefix: str = ""
+    ) -> Union[str, list]:
+        context = self._make_agent_context(event)
+        self._file_tool.set_context(context)
+        result = await self._file_tool.execute(action="list", prefix=prefix)
+        return self._format_list_output(result, "files")
 
     async def run_file(self, event: AstrMessageEvent, **kwargs) -> str:
         context = self._make_agent_context(event)
@@ -127,6 +142,33 @@ file save 示例：
         except ValueError:
             return text, 7, "retention days 必须是整数"
         return text[: match.start()].rstrip(), retention_days, None
+
+    @classmethod
+    def _format_list_output(cls, result: ToolResult, field: str) -> Union[str, list]:
+        """列表结果格式化：超过 LIST_CHUNK_SIZE 条时按批次分块返回，否则返回单条文本"""
+        items = None
+        if result.success and isinstance(result.data, dict):
+            candidate = result.data.get(field)
+            if isinstance(candidate, list):
+                items = candidate
+
+        if items is None or len(items) <= cls.LIST_CHUNK_SIZE:
+            return cls._format_result(result)
+
+        message = cls._clean_command_message(result.message)
+        total = len(items)
+        batch_count = math.ceil(total / cls.LIST_CHUNK_SIZE)
+        chunks = []
+        for index in range(batch_count):
+            batch = items[index * cls.LIST_CHUNK_SIZE : (index + 1) * cls.LIST_CHUNK_SIZE]
+            header = (
+                f"{message}（第 {index + 1}/{batch_count} 批，"
+                f"每批最多 {cls.LIST_CHUNK_SIZE} 条）"
+            )
+            chunks.append(
+                header + "\n" + json.dumps(batch, ensure_ascii=False, indent=2)
+            )
+        return chunks
 
     @staticmethod
     def _format_result(result: ToolResult) -> str:

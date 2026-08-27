@@ -8,7 +8,7 @@ from astrbot.api import star
 from astrbot.api.star import StarTools
 from astrbot.api import AstrBotConfig
 from astrbot.api.event import AstrMessageEvent, filter
-from astrbot.api.message_components import Image, Reply
+from astrbot.api.message_components import Image, Node, Nodes, Plain, Reply
 from astrbot.core.agent.tool import FunctionTool
 from astrbot.core.agent.run_context import ContextWrapper
 from astrbot.core.astr_agent_context import AstrAgentContext
@@ -263,6 +263,16 @@ async def _prepare_file_source_kwarg(
     if source_filename:
         kwargs["_source_filename"] = source_filename
     return None
+
+
+def _build_forward_nodes(chunks: list) -> Nodes:
+    """将分块文本构造为伪造转发消息（每块一个 Node）"""
+    return Nodes(
+        [
+            Node(content=[Plain(text)], name="NekoKit", uin="10000")
+            for text in chunks
+        ]
+    )
 
 
 @dataclass
@@ -1068,8 +1078,11 @@ class Main(star.Star):
     @nkit_kv.command("list")
     async def nkit_kv_list(self, event: AstrMessageEvent, prefix: str = ""):
         """列出当前作用域下的所有键"""
-        text = await self._command_service.run_kv_list(event, prefix)
-        yield event.plain_result(text)
+        output = await self._command_service.run_kv_list(event, prefix)
+        if isinstance(output, list):
+            yield event.chain_result([_build_forward_nodes(output)])
+        else:
+            yield event.plain_result(output)
 
     @nkit_kv.command("get")
     async def nkit_kv_get(self, event: AstrMessageEvent, key: str):
@@ -1099,10 +1112,11 @@ class Main(star.Star):
     @nkit_file.command("list")
     async def nkit_file_list(self, event: AstrMessageEvent, prefix: str = ""):
         """列出当前作用域下的文件"""
-        text = await self._command_service.run_file(
-            event, action="list", prefix=prefix
-        )
-        yield event.plain_result(text)
+        output = await self._command_service.run_file_list(event, prefix)
+        if isinstance(output, list):
+            yield event.chain_result([_build_forward_nodes(output)])
+        else:
+            yield event.plain_result(output)
 
     @nkit_file.command("save")
     async def nkit_file_save(

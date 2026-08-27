@@ -59,7 +59,7 @@ file save 示例：
 
     async def run_kv(self, event: AstrMessageEvent, action: str, **kwargs) -> str:
         self._kv_tool.set_context(self._make_agent_context(event))
-        result = await self._kv_tool.execute(action=action, **kwargs)
+        result = await self._kv_tool.execute_admin(action=action, **kwargs)
         if action == "get":
             return self._format_value_result(
                 result, "value", "已获取", kwargs.get("key")
@@ -70,21 +70,22 @@ file save 示例：
         self, event: AstrMessageEvent, prefix: str = ""
     ) -> Union[str, list]:
         self._kv_tool.set_context(self._make_agent_context(event))
-        result = await self._kv_tool.execute(action="list", prefix=prefix)
-        return self._format_list_output(result, "keys")
+        result = await self._kv_tool.execute_admin(action="list", prefix=prefix)
+        # list 返回所有符合的记录（含 ai_id 来源标注）
+        return self._format_list_output(result, "records")
 
     async def run_file_list(
         self, event: AstrMessageEvent, prefix: str = ""
     ) -> Union[str, list]:
         context = self._make_agent_context(event)
         self._file_tool.set_context(context)
-        result = await self._file_tool.execute(action="list", prefix=prefix)
+        result = await self._file_tool.execute_admin(action="list", prefix=prefix)
         return self._format_list_output(result, "files")
 
     async def run_file(self, event: AstrMessageEvent, **kwargs) -> str:
         context = self._make_agent_context(event)
         self._file_tool.set_context(context)
-        result = await self._file_tool.execute(**kwargs)
+        result = await self._file_tool.execute_admin(**kwargs)
         action = kwargs.get("action")
         if action == "get_path":
             return self._format_value_result(
@@ -112,7 +113,7 @@ file save 示例：
             if err:
                 return err
             self._file_tool.set_context(context)
-            result = await self._file_tool.execute(**kwargs)
+            result = await self._file_tool.execute_admin(**kwargs)
             return self._format_result(result)
         if mode in {"text", "content"}:
             kwargs["content"] = payload

@@ -3,53 +3,80 @@ from typing import Any, Dict, Optional
 from dataclasses import dataclass
 
 
+HUMAN_AI_ID = "user"
+"""特殊来源：人工 /nkit 命令写入的记录。所有 AI 均可读写，视为共享层。"""
+
+
+@dataclass
+class RecordScope:
+    """数据访问作用域。
+
+    每条记录写入时都会记录实际来源 ai_id / session_id 字段；
+    读取时根据开关计算可见性，修改开关不需要迁移数据。
+    ai_id 为 HUMAN_AI_ID 的记录（人工写入）对所有 AI 可见。
+    private 记录无视共享开关，仅精确匹配来源 (ai_id, session_id) 时可见；
+    管理员（is_admin）不受私有限制。
+    """
+
+    ai_id: str
+    session_id: str
+    ai_isolation: bool = True
+    session_scope: bool = False
+    is_admin: bool = False
+
+    def matches(self, record: Dict[str, Any]) -> bool:
+        """判断记录在当前开关组合下是否可见"""
+        if record.get("private"):
+            if self.is_admin:
+                return True
+            return (
+                record.get("ai_id") == self.ai_id
+                and record.get("session_id") == self.session_id
+            )
+        if self.ai_isolation and record.get("ai_id") not in (
+            self.ai_id,
+            HUMAN_AI_ID,
+        ):
+            return False
+        if self.session_scope and record.get("session_id") != self.session_id:
+            return False
+        return True
+
+
 class StorageBackend(ABC):
     """存储后端抽象基类，定义存储操作的统一接口"""
 
     @abstractmethod
-    def get(self, key: str, namespace: Optional[str] = None) -> Optional[Any]:
-        """获取键值"""
+    def get(self, key: str, scope: RecordScope) -> Optional[Any]:
+        """获取键值，多条可见时返回最近更新的记录"""
         pass
 
     @abstractmethod
-    def set(self, key: str, value: Any, namespace: Optional[str] = None) -> None:
-        """设置键值"""
+    def set(self, key: str, value: Any, scope: RecordScope, private: bool = False) -> None:
+        """设置键值：更新可见记录（保留原来源字段），无可见记录则新建并记录当前来源。
+
+        private=True 时仅命中/新建私有记录，不触碰其他可见记录。
+        """
         pass
 
     @abstractmethod
-    def delete(self, key: str, namespace: Optional[str] = None) -> bool:
-        """删除键值，返回是否成功"""
+    def delete(self, key: str, scope: RecordScope) -> bool:
+        """删除可见记录，返回是否成功"""
         pass
 
     @abstractmethod
-    def list_keys(self, namespace: Optional[str] = None) -> list:
-        """列出命名空间下的所有键"""
+    def list_keys(self, scope: RecordScope) -> list:
+        """列出可见记录的键（去重）"""
         pass
 
     @abstractmethod
-    def search(self, keyword: str, namespace: Optional[str] = None) -> list:
+    def list_records(self, scope: RecordScope) -> list:
+        """列出可见记录（含 key 与来源字段，不去重），供管理员视角展示"""
+        pass
+
+    @abstractmethod
+    def search(self, keyword: str, scope: RecordScope) -> list:
         """搜索键"""
-        pass
-
-    @abstractmethod
-    def clear_namespace(self, namespace: str) -> None:
-        """清空命名空间"""
-        pass
-
-
-class NamespaceStrategy(ABC):
-    """命名空间策略抽象基类"""
-
-    @abstractmethod
-    def build(self, ai_id: Optional[str], session_id: Optional[str]) -> Optional[str]:
-        """构建命名空间字符串"""
-        pass
-
-    @abstractmethod
-    def describe(
-        self, ai_isolation: bool, session_scope: bool, ai_id: str, session_id: str
-    ) -> str:
-        """描述命名空间范围"""
         pass
 
 

@@ -1,11 +1,12 @@
 import json
 import sqlite3
 import threading
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from astrbot.api import logger
-from ...core import StorageBackend
+from ...core import HUMAN_AI_ID, RecordScope, StorageBackend
 
 
 def _safe_store_name(store_name: str) -> str:
@@ -13,122 +14,194 @@ def _safe_store_name(store_name: str) -> str:
     return safe or "kvstore"
 
 
+def _utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="microseconds")
+
+
+def _visible_records(records: List[Dict[str, Any]], key: str, scope: RecordScope):
+    return [r for r in records if r.get("key") == key and scope.matches(r)]
+
+
+def _pick_record(
+    records: List[Dict[str, Any]],
+    scope: RecordScope,
+    prefer_user: bool = False,
+) -> Optional[Dict[str, Any]]:
+    """记录选择优先级。
+
+    读取（get）：优先当前 AI 在当前会话的私有记录，其次当前 AI 的记录，
+    最后第一条（存储顺序）。
+    写入（set，prefer_user=True）：优先 user 共享记录（避免合并时
+    吞掉共享层导致其他 AI 失去可见数据），其次当前 AI 的记录，否则第一条。
+    """
+    if not records:
+        return None
+    own_private = [
+        r
+        for r in records
+        if r.get("private")
+        and r.get("ai_id") == scope.ai_id
+        and r.get("session_id") == scope.session_id
+    ]
+    if own_private:
+        return own_private[0]
+    if prefer_user:
+        shared = [r for r in records if r.get("ai_id") == HUMAN_AI_ID]
+        if shared:
+            return shared[0]
+    own = [r for r in records if r.get("ai_id") == scope.ai_id]
+    pool = own or records
+    return pool[0]
+
+
 class JSONStorageBackend(StorageBackend):
-    """JSON 文件存储后端"""
+    """JSON 文件存储后端：单一文件，记录来源由 ai_id/session_id 字段控制"""
 
     def __init__(self, data_dir: str, store_name: str = "kvstore"):
         self.data_dir = Path(data_dir)
         self.data_dir.mkdir(parents=True, exist_ok=True)
         self.store_name = _safe_store_name(store_name)
-        self.global_file = self.data_dir / f"{self.store_name}_global.json"
-        self.namespace_files: Dict[str, Path] = {}
-        self._global_data: Dict[str, Any] = {}
+        self.data_file = self.data_dir / f"{self.store_name}.json"
+        self._records: List[Dict[str, Any]] = []
         self._lock = threading.Lock()
-        self._load_global()
+        self._load()
 
-    def _load_global(self) -> None:
-        if self.global_file.exists():
-            try:
-                with open(self.global_file, encoding="utf-8") as f:
-                    self._global_data = json.load(f)
-            except Exception as e:
-                logger.error(f"[JSONStorage] 加载全局数据失败: {e}")
-                self._global_data = {}
-
-    def _save_global(self) -> None:
+    def _load(self) -> None:
+        if not self.data_file.exists():
+            return
         try:
-            with open(self.global_file, "w", encoding="utf-8") as f:
-                json.dump(self._global_data, f, ensure_ascii=False, indent=2)
+            with open(self.data_file, encoding="utf-8") as f:
+                data = json.load(f)
+            if isinstance(data, dict) and isinstance(data.get("records"), list):
+                self._records = [
+                    r for r in data["records"] if isinstance(r, dict) and r.get("key")
+                ]
         except Exception as e:
-            logger.error(f"[JSONStorage] 保存全局数据失败: {e}")
+            logger.error(f"[JSONStorage] 加载数据失败: {e}")
+            self._records = []
 
-    def _get_namespace_file(self, namespace: str) -> Path:
-        if namespace not in self.namespace_files:
-            safe_ns = "".join(
-                c if c.isalnum() or c in "-_" else "_" for c in namespace
-            )
-            self.namespace_files[namespace] = (
-                self.data_dir / f"{self.store_name}_ns_{safe_ns}.json"
-            )
-        return self.namespace_files[namespace]
-
-    def _load_namespace(self, namespace: str) -> Dict[str, Any]:
-        ns_file = self._get_namespace_file(namespace)
-        if ns_file.exists():
-            try:
-                with open(ns_file, encoding="utf-8") as f:
-                    return json.load(f)
-            except Exception as e:
-                logger.error(f"[JSONStorage] 加载命名空间 {namespace} 失败: {e}")
-        return {}
-
-    def _save_namespace(self, namespace: str, data: Dict[str, Any]) -> None:
-        ns_file = self._get_namespace_file(namespace)
+    def _save(self) -> None:
         try:
-            with open(ns_file, "w", encoding="utf-8") as f:
-                json.dump(data, f, ensure_ascii=False, indent=2)
+            with open(self.data_file, "w", encoding="utf-8") as f:
+                json.dump(
+                    {"records": self._records}, f, ensure_ascii=False, indent=2
+                )
         except Exception as e:
-            logger.error(f"[JSONStorage] 保存命名空间 {namespace} 失败: {e}")
+            logger.error(f"[JSONStorage] 保存数据失败: {e}")
 
-    def get(self, key: str, namespace: Optional[str] = None) -> Optional[Any]:
+    def get(self, key: str, scope: RecordScope) -> Optional[Any]:
         with self._lock:
-            if namespace:
-                return self._load_namespace(namespace).get(key)
-            return self._global_data.get(key)
+            record = _pick_record(_visible_records(self._records, key, scope), scope)
+            return record.get("value") if record else None
 
-    def set(self, key: str, value: Any, namespace: Optional[str] = None) -> None:
+    def set(self, key: str, value: Any, scope: RecordScope, private: bool = False) -> None:
         with self._lock:
-            if namespace:
-                data = self._load_namespace(namespace)
-                data[key] = value
-                self._save_namespace(namespace, data)
+            now = _utc_now()
+            visible = _visible_records(self._records, key, scope)
+            if private:
+                # 私有写入：仅命中自己的私有记录（可见的私有记录即精确匹配
+                # 来源的记录），不触碰其他可见记录
+                target = next((r for r in visible if r.get("private")), None)
+                if target:
+                    target["value"] = value
+                    target["updated_at"] = now
+                else:
+                    self._records.append(
+                        {
+                            "key": key,
+                            "value": value,
+                            "ai_id": scope.ai_id,
+                            "session_id": scope.session_id,
+                            "private": True,
+                            "created_at": now,
+                            "updated_at": now,
+                        }
+                    )
             else:
-                self._global_data[key] = value
-                self._save_global()
+                # 公共写入：私有记录不参与更新与合并
+                candidates = [r for r in visible if not r.get("private")]
+                if candidates:
+                    # 更新选中的记录，并合并（删除）其余可见的同 key 重复记录
+                    target = _pick_record(candidates, scope, prefer_user=True)
+                    target["value"] = value
+                    target["updated_at"] = now
+                    remove = {id(r) for r in candidates} - {id(target)}
+                    if remove:
+                        self._records = [
+                            r for r in self._records if id(r) not in remove
+                        ]
+                else:
+                    self._records.append(
+                        {
+                            "key": key,
+                            "value": value,
+                            "ai_id": scope.ai_id,
+                            "session_id": scope.session_id,
+                            "created_at": now,
+                            "updated_at": now,
+                        }
+                    )
+            self._save()
 
-    def delete(self, key: str, namespace: Optional[str] = None) -> bool:
+    def delete(self, key: str, scope: RecordScope) -> bool:
         with self._lock:
-            if namespace:
-                data = self._load_namespace(namespace)
-                if key in data:
-                    del data[key]
-                    self._save_namespace(namespace, data)
-                    return True
+            visible = _visible_records(self._records, key, scope)
+            if not visible:
                 return False
-            if key in self._global_data:
-                del self._global_data[key]
-                self._save_global()
-                return True
-            return False
+            self._records = [
+                r for r in self._records if r not in visible
+            ]
+            self._save()
+            return True
 
-    def list_keys(self, namespace: Optional[str] = None) -> List[str]:
+    def list_keys(self, scope: RecordScope) -> List[str]:
         with self._lock:
-            if namespace:
-                return list(self._load_namespace(namespace).keys())
-            return list(self._global_data.keys())
+            keys = {
+                r.get("key")
+                for r in self._records
+                if r.get("key") and scope.matches(r)
+            }
+            return sorted(keys)
 
-    def search(
-        self, keyword: str, namespace: Optional[str] = None
-    ) -> List[Dict[str, Any]]:
-        results = []
-        keys = self.list_keys(namespace)
-        for key in keys:
-            if keyword.lower() in key.lower():
-                value = self.get(key, namespace)
-                results.append({"key": key, "value": value})
-        return results
-
-    def clear_namespace(self, namespace: str) -> None:
+    def list_records(self, scope: RecordScope) -> List[Dict[str, Any]]:
         with self._lock:
-            ns_file = self._get_namespace_file(namespace)
-            if ns_file.exists():
-                ns_file.unlink()
-            if namespace in self.namespace_files:
-                del self.namespace_files[namespace]
+            records = [
+                {
+                    "key": r.get("key"),
+                    "ai_id": r.get("ai_id"),
+                    "session_id": r.get("session_id"),
+                    "private": bool(r.get("private")),
+                    "updated_at": r.get("updated_at"),
+                }
+                for r in self._records
+                if r.get("key") and scope.matches(r)
+            ]
+            records.sort(key=lambda r: (str(r["key"]), str(r.get("updated_at") or "")))
+            return records
+
+    def search(self, keyword: str, scope: RecordScope) -> List[Dict[str, Any]]:
+        with self._lock:
+            matched: Dict[str, Dict[str, Any]] = {}
+            keyword_lower = keyword.lower()
+            for record in self._records:
+                key = record.get("key")
+                if not key or not scope.matches(record):
+                    continue
+                if keyword_lower not in str(key).lower():
+                    continue
+                current = matched.get(key)
+                if current is None or str(record.get("updated_at") or "") > str(
+                    current.get("updated_at") or ""
+                ):
+                    matched[key] = record
+            return [
+                {"key": key, "value": record.get("value")}
+                for key, record in matched.items()
+            ]
 
 
 class SQLiteStorageBackend(StorageBackend):
-    """SQLite 数据库存储后端"""
+    """SQLite 数据库存储后端：记录来源由 ai_id/session_id 字段控制"""
 
     def __init__(self, data_dir: str, store_name: str = "kvstore"):
         self.data_dir = Path(data_dir)
@@ -147,31 +220,58 @@ class SQLiteStorageBackend(StorageBackend):
         cursor.execute("""
             CREATE TABLE IF NOT EXISTS kvstore (
                 key TEXT NOT NULL,
+                ai_id TEXT NOT NULL,
+                session_id TEXT NOT NULL,
                 value TEXT NOT NULL,
-                namespace TEXT,
+                is_private INTEGER NOT NULL DEFAULT 0,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                PRIMARY KEY (key, namespace)
+                PRIMARY KEY (key, ai_id, session_id, is_private)
             )
         """)
-        cursor.execute("CREATE INDEX IF NOT EXISTS idx_namespace ON kvstore(namespace)")
+        cursor.execute("CREATE INDEX IF NOT EXISTS idx_key ON kvstore(key)")
         conn.commit()
         conn.close()
 
-    def get(self, key: str, namespace: Optional[str] = None) -> Optional[Any]:
+    @staticmethod
+    def _scope_clause(scope: RecordScope) -> tuple:
+        """根据开关生成可见性过滤条件。
+
+        私有记录无视共享开关，仅精确匹配来源 (ai_id, session_id) 时可见；
+        管理员（is_admin）不受私有限制。
+        """
+        clauses, params = [], []
+        if scope.ai_isolation:
+            clauses.append(
+                "((is_private = 0 AND (ai_id = ? OR ai_id = ?))"
+                " OR (is_private = 1 AND ai_id = ? AND session_id = ?))"
+            )
+            params.extend([scope.ai_id, HUMAN_AI_ID, scope.ai_id, scope.session_id])
+        elif not scope.is_admin:
+            clauses.append("(is_private = 0 OR (ai_id = ? AND session_id = ?))")
+            params.extend([scope.ai_id, scope.session_id])
+        if scope.session_scope:
+            if scope.is_admin:
+                # 管理员可见私有记录，其余按会话过滤
+                clauses.append("(is_private = 1 OR session_id = ?)")
+            else:
+                clauses.append("session_id = ?")
+            params.append(scope.session_id)
+        where = (" AND " + " AND ".join(clauses)) if clauses else ""
+        return where, params
+
+    def get(self, key: str, scope: RecordScope) -> Optional[Any]:
         with self._lock:
+            where, params = self._scope_clause(scope)
             conn = self._get_connection()
             cursor = conn.cursor()
-            if namespace:
-                cursor.execute(
-                    "SELECT value FROM kvstore WHERE key = ? AND namespace = ?",
-                    (key, namespace),
-                )
-            else:
-                cursor.execute(
-                    "SELECT value FROM kvstore WHERE key = ? AND namespace IS NULL",
-                    (key,),
-                )
+            # 优先当前 AI 在当前会话的私有记录，其次当前 AI 的记录，最后第一条
+            cursor.execute(
+                "SELECT value FROM kvstore WHERE key = ?"
+                f"{where} ORDER BY (is_private = 1 AND ai_id = ? AND session_id = ?)"
+                " DESC, (ai_id = ?) DESC, rowid ASC LIMIT 1",
+                (key, *params, scope.ai_id, scope.session_id, scope.ai_id),
+            )
             row = cursor.fetchone()
             conn.close()
             if row:
@@ -181,77 +281,131 @@ class SQLiteStorageBackend(StorageBackend):
                     return row[0]
             return None
 
-    def set(self, key: str, value: Any, namespace: Optional[str] = None) -> None:
+    def set(self, key: str, value: Any, scope: RecordScope, private: bool = False) -> None:
         with self._lock:
             conn = self._get_connection()
             cursor = conn.cursor()
             value_str = json.dumps(value, ensure_ascii=False)
-            if namespace:
+            if private:
+                # 私有写入：仅命中自己的私有记录，不触碰其他可见记录
                 cursor.execute(
-                    "INSERT OR REPLACE INTO kvstore (key, value, namespace, updated_at) "
-                    "VALUES (?, ?, ?, CURRENT_TIMESTAMP)",
-                    (key, value_str, namespace),
+                    "SELECT rowid FROM kvstore WHERE key = ? AND ai_id = ? "
+                    "AND session_id = ? AND is_private = 1",
+                    (key, scope.ai_id, scope.session_id),
                 )
+                row = cursor.fetchone()
+                if row:
+                    cursor.execute(
+                        "UPDATE kvstore SET value = ?, "
+                        "updated_at = CURRENT_TIMESTAMP WHERE rowid = ?",
+                        (value_str, row[0]),
+                    )
+                else:
+                    cursor.execute(
+                        "INSERT INTO kvstore (key, ai_id, session_id, value, "
+                        "is_private) VALUES (?, ?, ?, ?, 1)",
+                        (key, scope.ai_id, scope.session_id, value_str),
+                    )
             else:
+                where, params = self._scope_clause(scope)
+                # 公共写入：私有记录不参与更新与合并；
+                # 目标优先级 user 共享记录 > 当前 AI 记录 > 第一条（写入顺序）
                 cursor.execute(
-                    "INSERT OR REPLACE INTO kvstore (key, value, namespace, updated_at) "
-                    "VALUES (?, ?, NULL, CURRENT_TIMESTAMP)",
-                    (key, value_str),
+                    "SELECT rowid FROM kvstore WHERE key = ? AND is_private = 0"
+                    f"{where} ORDER BY (ai_id = ?) DESC, (ai_id = ?) DESC, rowid ASC",
+                    (key, *params, HUMAN_AI_ID, scope.ai_id),
                 )
+                rowids = [row[0] for row in cursor.fetchall()]
+                if rowids:
+                    # 更新选中的记录，并合并（删除）其余可见的同 key 重复记录
+                    cursor.execute(
+                        "UPDATE kvstore SET value = ?, updated_at = CURRENT_TIMESTAMP "
+                        "WHERE rowid = ?",
+                        (value_str, rowids[0]),
+                    )
+                    for rowid in rowids[1:]:
+                        cursor.execute("DELETE FROM kvstore WHERE rowid = ?", (rowid,))
+                else:
+                    cursor.execute(
+                        "INSERT INTO kvstore (key, ai_id, session_id, value) "
+                        "VALUES (?, ?, ?, ?)",
+                        (key, scope.ai_id, scope.session_id, value_str),
+                    )
             conn.commit()
             conn.close()
 
-    def delete(self, key: str, namespace: Optional[str] = None) -> bool:
+    def delete(self, key: str, scope: RecordScope) -> bool:
         with self._lock:
+            where, params = self._scope_clause(scope)
             conn = self._get_connection()
             cursor = conn.cursor()
-            if namespace:
-                cursor.execute(
-                    "DELETE FROM kvstore WHERE key = ? AND namespace = ?",
-                    (key, namespace),
-                )
-            else:
-                cursor.execute(
-                    "DELETE FROM kvstore WHERE key = ? AND namespace IS NULL",
-                    (key,),
-                )
+            cursor.execute(
+                f"DELETE FROM kvstore WHERE key = ?{where}", (key, *params)
+            )
             affected = cursor.rowcount
             conn.commit()
             conn.close()
             return affected > 0
 
-    def list_keys(self, namespace: Optional[str] = None) -> List[str]:
+    def list_keys(self, scope: RecordScope) -> List[str]:
         with self._lock:
+            where, params = self._scope_clause(scope)
             conn = self._get_connection()
             cursor = conn.cursor()
-            if namespace:
-                cursor.execute(
-                    "SELECT key FROM kvstore WHERE namespace = ?", (namespace,)
-                )
-            else:
-                cursor.execute("SELECT key FROM kvstore WHERE namespace IS NULL")
+            cursor.execute(
+                f"SELECT DISTINCT key FROM kvstore WHERE 1=1{where}", params
+            )
             rows = cursor.fetchall()
             conn.close()
-            return [row[0] for row in rows]
+            return sorted(row[0] for row in rows)
 
-    def search(
-        self, keyword: str, namespace: Optional[str] = None
-    ) -> List[Dict[str, Any]]:
-        results = []
-        keys = self.list_keys(namespace)
-        for key in keys:
-            if keyword.lower() in key.lower():
-                value = self.get(key, namespace)
-                results.append({"key": key, "value": value})
-        return results
-
-    def clear_namespace(self, namespace: str) -> None:
+    def list_records(self, scope: RecordScope) -> List[Dict[str, Any]]:
         with self._lock:
+            where, params = self._scope_clause(scope)
             conn = self._get_connection()
             cursor = conn.cursor()
-            cursor.execute("DELETE FROM kvstore WHERE namespace = ?", (namespace,))
-            conn.commit()
+            cursor.execute(
+                "SELECT key, ai_id, session_id, is_private, updated_at FROM kvstore "
+                f"WHERE 1=1{where} ORDER BY key, updated_at",
+                params,
+            )
+            rows = cursor.fetchall()
             conn.close()
+            return [
+                {
+                    "key": row[0],
+                    "ai_id": row[1],
+                    "session_id": row[2],
+                    "private": bool(row[3]),
+                    "updated_at": row[4],
+                }
+                for row in rows
+            ]
+
+    def search(self, keyword: str, scope: RecordScope) -> List[Dict[str, Any]]:
+        with self._lock:
+            where, params = self._scope_clause(scope)
+            conn = self._get_connection()
+            cursor = conn.cursor()
+            cursor.execute(
+                "SELECT key, value FROM kvstore WHERE key LIKE ?"
+                f"{where} ORDER BY updated_at DESC, rowid DESC",
+                (f"%{keyword}%", *params),
+            )
+            rows = cursor.fetchall()
+            conn.close()
+            results = []
+            seen = set()
+            for key, value in rows:
+                if key in seen:
+                    continue
+                seen.add(key)
+                try:
+                    parsed = json.loads(value)
+                except Exception:
+                    parsed = value
+                results.append({"key": key, "value": parsed})
+            return results
 
 
 def create_storage_backend(

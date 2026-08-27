@@ -11,9 +11,9 @@ from astrbot.core.agent.run_context import ContextWrapper
 from astrbot.core.astr_agent_context import AstrAgentContext
 from astrbot.core.utils.astrbot_path import get_astrbot_temp_path
 
-from ...core import BaseTool, NamespaceStrategy, ToolResult
-from ..kv_store.context import get_ai_id, get_session_id
-from ..kv_store.kv_store_tool import DefaultNamespaceStrategy
+from ...core import BaseTool, RecordScope, ToolResult, HUMAN_AI_ID
+from ..kv_store.context import resolve_identity
+from ..kv_store.kv_store_tool import describe_scope
 from .storage import FileStorageBackend
 
 
@@ -22,7 +22,6 @@ class FileStoreTool(BaseTool):
 
     def __init__(self):
         self._storage: Optional[FileStorageBackend] = None
-        self._namespace_strategy: NamespaceStrategy = DefaultNamespaceStrategy()
         self._context: Optional[ContextWrapper[AstrAgentContext]] = None
         self._config = {"ai_isolation": True, "session_scope": False}
 
@@ -57,15 +56,33 @@ class FileStoreTool(BaseTool):
                 "content_base64": {"type": "string"},
                 "retention_days": {"type": "integer"},
                 "prefix": {"type": "string"},
+                "private": {
+                    "type": "boolean",
+                    "description": (
+                        "（save 操作可选）是否为私有文件：仅保存时的 AI 在保存会话内可见，"
+                        "即使开启 AI 共享/会话共享也不会暴露给其他 AI 或会话。"
+                        "默认 false（普通文件）。"
+                    ),
+                    "default": False,
+                },
             },
             "required": ["action"],
         }
 
     async def execute(self, **kwargs) -> ToolResult:
+        """LLM 工具调用入口：按配置的隔离开关访问"""
+        return await self._run(kwargs, admin=False)
+
+    async def execute_admin(self, **kwargs) -> ToolResult:
+        """人工命令入口：管理员视角，忽略 AI 隔离（可见所有 AI 的文件），
+        新保存的文件盖 user 来源，所有 AI 可读写"""
+        return await self._run(kwargs, admin=True)
+
+    async def _run(self, kwargs: Dict[str, Any], admin: bool = False) -> ToolResult:
         if not self._storage:
             return ToolResult(success=False, message="FileStore 未初始化")
 
-        namespace, scope_desc = await self._build_namespace()
+        scope, scope_desc = await self._build_scope(admin=admin)
         action = kwargs.get("action", "")
 
         try:
@@ -74,15 +91,15 @@ class FileStoreTool(BaseTool):
             except Exception as e:
                 logger.warning(f"[FileStoreTool] 过期文件清理失败: {e}")
             if action == "save":
-                return self._handle_save(kwargs, namespace, scope_desc)
+                return self._handle_save(kwargs, scope, scope_desc)
             if action == "get_path":
-                return self._handle_get_path(kwargs, namespace)
+                return self._handle_get_path(kwargs, scope)
             if action == "get_url":
-                return await self._handle_get_url(kwargs, namespace)
+                return await self._handle_get_url(kwargs, scope)
             if action == "list":
-                return self._handle_list(kwargs, namespace, scope_desc)
+                return self._handle_list(kwargs, scope, scope_desc)
             if action == "delete":
-                return self._handle_delete(kwargs, namespace)
+                return self._handle_delete(kwargs, scope)
             return ToolResult(
                 success=False,
                 message="未知操作，支持: save、get_path、get_url、list、delete",
@@ -91,32 +108,26 @@ class FileStoreTool(BaseTool):
             logger.error(f"[FileStoreTool] 执行失败: {e}")
             return ToolResult(success=False, message=f"文件存储操作失败: {str(e)}")
 
-    async def _build_namespace(self) -> tuple[Optional[str], str]:
-        ai_id = "default_ai"
-        session_id = "default_session"
-        if self._context:
-            try:
-                ai_id = await get_ai_id(self._context)
-            except Exception as e:
-                logger.warning(f"[FileStoreTool] 获取 AI ID 失败: {e}")
-            try:
-                session_id = get_session_id(self._context)
-            except Exception as e:
-                logger.warning(f"[FileStoreTool] 获取会话 ID 失败: {e}")
+    async def _build_scope(self, admin: bool = False) -> tuple[RecordScope, str]:
+        ai_id, session_id = await resolve_identity(self._context)
 
         ai_isolation = self._config.get("ai_isolation", True)
+        if admin:
+            ai_isolation = False
+            ai_id = HUMAN_AI_ID
         session_scope = self._config.get("session_scope", False)
-        namespace = self._namespace_strategy.build(
-            ai_id=ai_id if ai_isolation else None,
-            session_id=session_id if session_scope else None,
+        scope = RecordScope(
+            ai_id=ai_id,
+            session_id=session_id,
+            ai_isolation=ai_isolation,
+            session_scope=session_scope,
+            is_admin=admin,
         )
-        scope_desc = self._namespace_strategy.describe(
-            ai_isolation, session_scope, ai_id, session_id
-        )
-        return namespace, scope_desc
+        scope_desc = describe_scope(ai_isolation, session_scope, ai_id, session_id)
+        return scope, scope_desc
 
     def _handle_save(
-        self, kwargs: Dict[str, Any], namespace: Optional[str], scope_desc: str
+        self, kwargs: Dict[str, Any], scope: RecordScope, scope_desc: str
     ) -> ToolResult:
         key = self._require_key(kwargs)
         source_path = str(kwargs.get("source_path") or "").strip()
@@ -138,41 +149,51 @@ class FileStoreTool(BaseTool):
                 message="保存文件需要且只能提供 source_path、content、content_base64 之一",
             )
 
+        private = bool(kwargs.get("private", False))
+
         if source_path:
             metadata = self._storage.put_file(
                 key,
                 self._normalize_source_path(source_path),
-                namespace,
+                scope,
                 retention_days=retention_days,
                 source_filename=kwargs.get("_source_filename"),
+                private=private,
             )
         elif content_base64 is not None:
             metadata = self._storage.put_bytes(
                 key,
                 base64.b64decode(str(content_base64), validate=True),
-                namespace,
+                scope,
                 retention_days=retention_days,
+                private=private,
             )
         else:
             metadata = self._storage.put_bytes(
                 key,
                 str(content).encode("utf-8"),
-                namespace,
+                scope,
                 retention_days=retention_days,
                 default_suffix=".txt",
+                private=private,
             )
 
+        if private:
+            metadata["scope"] = "私有（仅本 AI 当前会话可见）"
+            return ToolResult(
+                success=True, message="已保存为私有文件", data=metadata
+            )
         metadata["scope"] = scope_desc
         return ToolResult(success=True, message="已保存文件", data=metadata)
 
     def _handle_get_path(
-        self, kwargs: Dict[str, Any], namespace: Optional[str]
+        self, kwargs: Dict[str, Any], scope: RecordScope
     ) -> ToolResult:
         key = self._require_key(kwargs)
-        path = self._storage.get_path(key, namespace)
+        path = self._storage.get_path(key, scope)
         if not path:
             return ToolResult(success=False, message=f"找不到文件 '{key}'")
-        metadata = self._storage.get_metadata(key, namespace) or {"key": key}
+        metadata = self._storage.get_metadata(key, scope) or {"key": key}
         try:
             temp_path = self._copy_to_temp(path, metadata)
         except (FileNotFoundError, OSError, ValueError) as e:
@@ -185,10 +206,10 @@ class FileStoreTool(BaseTool):
         return ToolResult(success=True, message="已获取文件路径", data=metadata)
 
     async def _handle_get_url(
-        self, kwargs: Dict[str, Any], namespace: Optional[str]
+        self, kwargs: Dict[str, Any], scope: RecordScope
     ) -> ToolResult:
         key = self._require_key(kwargs)
-        path = self._storage.get_path(key, namespace)
+        path = self._storage.get_path(key, scope)
         if not path:
             return ToolResult(success=False, message=f"找不到文件 '{key}'")
 
@@ -203,7 +224,7 @@ class FileStoreTool(BaseTool):
 
         token = await file_token_service.register_file(path)
         url = f"{str(callback_host).removesuffix('/')}/api/file/{token}"
-        metadata = self._storage.get_metadata(key, namespace) or {"key": key}
+        metadata = self._storage.get_metadata(key, scope) or {"key": key}
         metadata.update({"url": url, "token": token})
         return ToolResult(
             success=True,
@@ -212,10 +233,10 @@ class FileStoreTool(BaseTool):
         )
 
     def _handle_list(
-        self, kwargs: Dict[str, Any], namespace: Optional[str], scope_desc: str
+        self, kwargs: Dict[str, Any], scope: RecordScope, scope_desc: str
     ) -> ToolResult:
         prefix = str(kwargs.get("prefix") or "")
-        files = self._storage.list_files(namespace, prefix=prefix)
+        files = self._storage.list_files(scope, prefix=prefix)
         return ToolResult(
             success=True,
             message=f"找到 {len(files)} 个文件",
@@ -223,10 +244,10 @@ class FileStoreTool(BaseTool):
         )
 
     def _handle_delete(
-        self, kwargs: Dict[str, Any], namespace: Optional[str]
+        self, kwargs: Dict[str, Any], scope: RecordScope
     ) -> ToolResult:
         key = self._require_key(kwargs)
-        if self._storage.delete(key, namespace):
+        if self._storage.delete(key, scope):
             return ToolResult(success=True, message="已删除文件", data={"key": key})
         return ToolResult(success=False, message=f"找不到文件 '{key}'")
 

@@ -14,7 +14,7 @@ class NekoKitCommandService:
     """Command-facing adapter for NekoKit tools."""
 
     LIST_CHUNK_SIZE = 50
-    NODE_MAX_CHARS = 4000
+    NODE_MAX_CHARS = 1500
 
     HELP_TEXT = """NekoKit 人工命令
 /nkit help
@@ -168,7 +168,7 @@ file save 示例：
     @classmethod
     def _format_list_output(cls, result: ToolResult, field: str) -> Union[str, list]:
         """列表结果格式化：总字符不超过 NODE_MAX_CHARS 时返回单条文本，
-        否则按顺序贪心装箱分块（每块 ≤50 条且 ≤4000 字符，记录不截断）"""
+        否则按顺序贪心装箱分块（每块 ≤50 条且 ≤1500 字符，记录不截断）"""
         items = None
         if result.success and isinstance(result.data, dict):
             candidate = result.data.get(field)

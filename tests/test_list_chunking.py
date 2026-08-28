@@ -1,4 +1,4 @@
-"""FIFO 装箱分块逻辑测试：≤50 条 / ≤4000 字符一批，单条记录不截断"""
+"""顺序贪心装箱分块逻辑测试：≤50 条 / ≤4000 字符一批，单条记录不截断"""
 
 import json
 
@@ -14,7 +14,7 @@ def _records(count: int, value_size: int = 10) -> list:
 
 
 def _pack(items: list) -> list:
-    return NekoKitCommandService._pack_fifo_batches(items)
+    return NekoKitCommandService._pack_sequential_batches(items)
 
 
 def test_few_small_records_single_batch():
@@ -47,7 +47,7 @@ def test_single_oversized_record_not_truncated():
     assert len(batches[1][0]) > 4000
 
 
-def test_fifo_order_preserved():
+def test_order_preserved():
     items = _records(60, value_size=5)
     batches = _pack(items)
     flat = [json.loads(t) for batch in batches for t in batch]

@@ -145,8 +145,8 @@ file save 示例：
         return text[: match.start()].rstrip(), retention_days, None
 
     @classmethod
-    def _pack_fifo_batches(cls, items: list) -> list:
-        """FIFO 装箱：按记录顺序累积，条数达 LIST_CHUNK_SIZE 或累计字符达
+    def _pack_sequential_batches(cls, items: list) -> list:
+        """顺序贪心装箱：逐条累积，条数达 LIST_CHUNK_SIZE 或累计字符达
         NODE_MAX_CHARS 即成一批；单条记录永不被截断。"""
         batches = []
         batch = []
@@ -168,7 +168,7 @@ file save 示例：
     @classmethod
     def _format_list_output(cls, result: ToolResult, field: str) -> Union[str, list]:
         """列表结果格式化：总字符不超过 NODE_MAX_CHARS 时返回单条文本，
-        否则按 FIFO 装箱分块（每块 ≤50 条且 ≤4000 字符，记录不截断）"""
+        否则按顺序贪心装箱分块（每块 ≤50 条且 ≤4000 字符，记录不截断）"""
         items = None
         if result.success and isinstance(result.data, dict):
             candidate = result.data.get(field)
@@ -178,7 +178,7 @@ file save 示例：
         if items is None:
             return cls._format_result(result)
 
-        batches = cls._pack_fifo_batches(items)
+        batches = cls._pack_sequential_batches(items)
         if len(batches) <= 1:
             return cls._format_result(result)
 

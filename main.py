@@ -266,14 +266,14 @@ async def _prepare_file_source_kwarg(
     return None
 
 
-FORWARD_NODE_MAX_CHARS = 1500
+FORWARD_NODE_MAX_CHARS = 4000
 FORWARD_SEND_ATTEMPTS = 3
 FORWARD_RETRY_DELAY = 1.5
 
 
 def _build_forward_nodes(chunks: list, self_id: str = "") -> Nodes:
     """将分块文本构造为伪造转发消息（每块一个 Node）。
-    分块已由 command_service 保证 ≤1500 字符（单条超大记录除外，不截断）。
+    分块已由 command_service 保证 ≤4000 字符（单条超大记录除外，不截断）。
     伪造发送者优先用机器人自身 QQ 号（真实存在的账号，降低风控拦截概率）。"""
     uin = self_id or "10000"
     return Nodes(

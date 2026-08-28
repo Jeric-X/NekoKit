@@ -42,6 +42,10 @@ def _install_astrbot_mocks() -> None:
     api.logger = _Logger()
     astrbot.api = api
 
+    api_event = types.ModuleType("astrbot.api.event")
+    api_event.AstrMessageEvent = object
+    astrbot.api.event = api_event
+
     run_context = types.ModuleType("astrbot.core.agent.run_context")
 
     @dataclass
@@ -75,6 +79,7 @@ def _install_astrbot_mocks() -> None:
     for name, mod in {
         "astrbot": astrbot,
         "astrbot.api": api,
+        "astrbot.api.event": api_event,
         "astrbot.core": core,
         "astrbot.core.agent": agent,
         "astrbot.core.agent.run_context": run_context,

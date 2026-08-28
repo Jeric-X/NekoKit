@@ -1,5 +1,4 @@
 import json
-import math
 import re
 from typing import Callable, Optional, Union
 
@@ -15,6 +14,7 @@ class NekoKitCommandService:
     """Command-facing adapter for NekoKit tools."""
 
     LIST_CHUNK_SIZE = 50
+    NODE_MAX_CHARS = 4000
 
     HELP_TEXT = """NekoKit 人工命令
 /nkit help
@@ -145,30 +145,49 @@ file save 示例：
         return text[: match.start()].rstrip(), retention_days, None
 
     @classmethod
+    def _pack_fifo_batches(cls, items: list) -> list:
+        """FIFO 装箱：按记录顺序累积，条数达 LIST_CHUNK_SIZE 或累计字符达
+        NODE_MAX_CHARS 即成一批；单条记录永不被截断。"""
+        batches = []
+        batch = []
+        size = 0
+        for item in items:
+            text = json.dumps(item, ensure_ascii=False, indent=2)
+            if batch and (
+                len(batch) >= cls.LIST_CHUNK_SIZE or size + len(text) > cls.NODE_MAX_CHARS
+            ):
+                batches.append(batch)
+                batch = []
+                size = 0
+            batch.append(text)
+            size += len(text)
+        if batch:
+            batches.append(batch)
+        return batches
+
+    @classmethod
     def _format_list_output(cls, result: ToolResult, field: str) -> Union[str, list]:
-        """列表结果格式化：超过 LIST_CHUNK_SIZE 条时按批次分块返回，否则返回单条文本"""
+        """列表结果格式化：总字符不超过 NODE_MAX_CHARS 时返回单条文本，
+        否则按 FIFO 装箱分块（每块 ≤50 条且 ≤4000 字符，记录不截断）"""
         items = None
         if result.success and isinstance(result.data, dict):
             candidate = result.data.get(field)
             if isinstance(candidate, list):
                 items = candidate
 
-        if items is None or len(items) <= cls.LIST_CHUNK_SIZE:
+        if items is None:
+            return cls._format_result(result)
+
+        batches = cls._pack_fifo_batches(items)
+        if len(batches) <= 1:
             return cls._format_result(result)
 
         message = cls._clean_command_message(result.message)
-        total = len(items)
-        batch_count = math.ceil(total / cls.LIST_CHUNK_SIZE)
+        total = len(batches)
         chunks = []
-        for index in range(batch_count):
-            batch = items[index * cls.LIST_CHUNK_SIZE : (index + 1) * cls.LIST_CHUNK_SIZE]
-            header = (
-                f"{message}（第 {index + 1}/{batch_count} 批，"
-                f"每批最多 {cls.LIST_CHUNK_SIZE} 条）"
-            )
-            chunks.append(
-                header + "\n" + json.dumps(batch, ensure_ascii=False, indent=2)
-            )
+        for index, batch in enumerate(batches):
+            header = f"{message}（第 {index + 1}/{total} 批）"
+            chunks.append(header + "\n[\n" + ",\n".join(batch) + "\n]")
         return chunks
 
     @staticmethod

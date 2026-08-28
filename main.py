@@ -268,23 +268,13 @@ async def _prepare_file_source_kwarg(
 FORWARD_NODE_MAX_CHARS = 4000
 
 
-def _split_chunk_text(chunks: list) -> list:
-    """将分块文本再按字符数切小，避免单个节点内容过大导致转发上传失败"""
-    pieces = []
-    for text in chunks:
-        pieces.extend(
-            text[i : i + FORWARD_NODE_MAX_CHARS]
-            for i in range(0, len(text), FORWARD_NODE_MAX_CHARS)
-        )
-    return pieces
-
-
 def _build_forward_nodes(chunks: list) -> Nodes:
-    """将分块文本构造为伪造转发消息（每块一个 Node）"""
+    """将分块文本构造为伪造转发消息（每块一个 Node）。
+    分块已由 command_service 保证 ≤4000 字符（单条超大记录除外，不截断）。"""
     return Nodes(
         [
             Node(content=[Plain(text)], name="NekoKit", uin="10000")
-            for text in _split_chunk_text(chunks)
+            for text in chunks
         ]
     )
 
@@ -1098,7 +1088,7 @@ class Main(star.Star):
                 await event.send(event.chain_result([_build_forward_nodes(output)]))
             except Exception as e:
                 logger.warning(f"转发消息发送失败，降级为逐条文本: {e}")
-                for piece in _split_chunk_text(output):
+                for piece in output:
                     yield event.plain_result(piece)
         else:
             yield event.plain_result(output)
@@ -1137,7 +1127,7 @@ class Main(star.Star):
                 await event.send(event.chain_result([_build_forward_nodes(output)]))
             except Exception as e:
                 logger.warning(f"转发消息发送失败，降级为逐条文本: {e}")
-                for piece in _split_chunk_text(output):
+                for piece in output:
                     yield event.plain_result(piece)
         else:
             yield event.plain_result(output)

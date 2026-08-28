@@ -1,3 +1,4 @@
+import asyncio
 import json
 import os
 import re
@@ -266,17 +267,42 @@ async def _prepare_file_source_kwarg(
 
 
 FORWARD_NODE_MAX_CHARS = 4000
+FORWARD_SEND_ATTEMPTS = 3
+FORWARD_RETRY_DELAY = 1.5
 
 
-def _build_forward_nodes(chunks: list) -> Nodes:
+def _build_forward_nodes(chunks: list, self_id: str = "") -> Nodes:
     """将分块文本构造为伪造转发消息（每块一个 Node）。
-    分块已由 command_service 保证 ≤4000 字符（单条超大记录除外，不截断）。"""
+    分块已由 command_service 保证 ≤4000 字符（单条超大记录除外，不截断）。
+    伪造发送者优先用机器人自身 QQ 号（真实存在的账号，降低风控拦截概率）。"""
+    uin = self_id or "10000"
     return Nodes(
         [
-            Node(content=[Plain(text)], name="NekoKit", uin="10000")
+            Node(content=[Plain(text)], name="NekoKit", uin=uin)
             for text in chunks
         ]
     )
+
+
+async def _send_forward_with_retry(event, chunks: list) -> bool:
+    """发送伪造合并转发，失败时重试。全部失败返回 False（由调用方降级）。"""
+    self_id = event.get_self_id()
+    last_error = None
+    for attempt in range(1, FORWARD_SEND_ATTEMPTS + 1):
+        try:
+            await event.send(
+                event.chain_result([_build_forward_nodes(chunks, self_id)])
+            )
+            return True
+        except Exception as e:
+            last_error = e
+            if attempt < FORWARD_SEND_ATTEMPTS:
+                logger.warning(
+                    f"转发消息第 {attempt} 次发送失败，{FORWARD_RETRY_DELAY}s 后重试: {e}"
+                )
+                await asyncio.sleep(FORWARD_RETRY_DELAY)
+    logger.warning(f"转发消息 {FORWARD_SEND_ATTEMPTS} 次均失败，降级为逐条文本: {last_error}")
+    return False
 
 
 @dataclass
@@ -1084,10 +1110,7 @@ class Main(star.Star):
         """列出当前作用域下的所有键"""
         output = await self._command_service.run_kv_list(event, prefix)
         if isinstance(output, list):
-            try:
-                await event.send(event.chain_result([_build_forward_nodes(output)]))
-            except Exception as e:
-                logger.warning(f"转发消息发送失败，降级为逐条文本: {e}")
+            if not await _send_forward_with_retry(event, output):
                 for piece in output:
                     yield event.plain_result(piece)
         else:
@@ -1123,10 +1146,7 @@ class Main(star.Star):
         """列出当前作用域下的文件"""
         output = await self._command_service.run_file_list(event, prefix)
         if isinstance(output, list):
-            try:
-                await event.send(event.chain_result([_build_forward_nodes(output)]))
-            except Exception as e:
-                logger.warning(f"转发消息发送失败，降级为逐条文本: {e}")
+            if not await _send_forward_with_retry(event, output):
                 for piece in output:
                     yield event.plain_result(piece)
         else:
